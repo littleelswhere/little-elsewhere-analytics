@@ -1220,6 +1220,7 @@ a { color: #86b9ff; }
 <button type="button" class="tab-button active" data-tab="overview" aria-selected="true">Vue d'ensemble</button>
 <button type="button" class="tab-button" data-tab="videos" aria-selected="false">Vidéos</button>
 <button type="button" class="tab-button" data-tab="history" aria-selected="false">Évolution</button>
+<button type="button" class="tab-button" data-tab="advice" aria-selected="false">Conseils</button>
 </nav>
 <div class="tab-panel" data-panel="overview">
 <section>
@@ -1295,6 +1296,24 @@ a { color: #86b9ff; }
 
   </div>
 
+</section>
+</div>
+<div class="tab-panel" data-panel="advice" hidden>
+<section>
+  <h2>Conseils pour les prochaines vidéos</h2>
+  <p class="muted">Analyse automatique fondée sur les statistiques TikTok disponibles. Ce module n'utilise pas encore de modèle d'IA générative et ne peut pas analyser le contenu visuel des vidéos.</p>
+  <div id="adviceSummary" class="insight-grid" aria-live="polite"><p class="muted">Analyse en cours...</p></div>
+</section>
+<section>
+  <h2>Actions recommandées</h2>
+  <div id="adviceActions"></div>
+  <button type="button" id="copyAdvice" style="margin-top:18px">Copier le bilan</button>
+  <p class="muted" id="copyAdviceStatus" aria-live="polite"></p>
+</section>
+<section>
+  <h2>Idée de test créatif</h2>
+  <p class="muted" id="creativeSuggestion">En attente des statistiques...</p>
+  <p class="muted">Il s'agit d'une piste de test, pas d'une prédiction de performance. La classification automatique des thèmes et la génération de prompts nécessiteront une connexion IA dédiée.</p>
 </section>
 </div>
 
@@ -1384,6 +1403,7 @@ async function loadStats() {
     renderVideos();
     renderTopGainers();
     renderInsights();
+    renderAdvice();
 
 
 
@@ -1423,6 +1443,56 @@ function renderInsights() {
     card.append(label,strong,p);root.appendChild(card);
   });
 }
+function renderAdvice() {
+  const all = window.currentVideos || [];
+  const summary = document.getElementById("adviceSummary");
+  const actions = document.getElementById("adviceActions");
+  summary.replaceChildren();actions.replaceChildren();
+  const ordered = all.slice().sort((a,b)=>b.views-a.views);
+  const median = ordered.length ? ordered.map(v=>v.views).sort((a,b)=>a-b)[Math.floor(ordered.length/2)] : 0;
+  const active = all.filter(v=>v.trend==="accelerating").sort((a,b)=>(b.viewsPerHour||0)-(a.viewsPerHour||0));
+  const fast = all.filter(v=>v.viewsPerHour != null && Number.isFinite(v.viewsPerHour)).sort((a,b)=>b.viewsPerHour-a.viewsPerHour);
+  const engaged = all.filter(v=>v.views>=Math.max(100,median*0.5)).sort((a,b)=>b.engagementRate-a.engagementRate);
+  const candidates = [
+    ["À surveiller maintenant",active[0],active[0]?"Accélération mesurée sur trois relevés.":"Aucune accélération confirmée à ce stade."],
+    ["Plus forte progression horaire",fast[0],fast[0]?"Vitesse entre les deux derniers relevés.":"Il faut au moins deux relevés espacés."],
+    ["Engagement à examiner",engaged[0],engaged[0]?"Interactions rapportées aux vues ; indicateur descriptif.":"Pas assez de vues pour une comparaison utile."]
+  ];
+  const report=[];
+  candidates.forEach(([heading,video,note])=>{
+    const card=document.createElement("article");card.className="insight-card";
+    const title=document.createElement("div");title.className="muted";title.textContent=heading;
+    const strong=document.createElement("strong");strong.style.fontSize="17px";strong.style.overflowWrap="anywhere";
+    strong.textContent=video?(video.title||video.video_id):"À mesurer";
+    const p=document.createElement("p");p.className="muted";p.textContent=note;
+    card.append(title,strong,p);summary.appendChild(card);
+    report.push(heading+": "+strong.textContent+" — "+note);
+  });
+  const tips=[];
+  if(active.length)tips.push("Surveille les "+Math.min(3,active.length)+" vidéos en accélération lors des prochains relevés : vérifie si leur vitesse continue d'augmenter.");
+  else tips.push("Attends au moins trois relevés espacés pour identifier une accélération fiable.");
+  if(fast.length)tips.push("Compare les vitesses en vues/heure plutôt que les seuls gains bruts : les intervalles entre relevés ne sont pas toujours identiques.");
+  if(engaged.length)tips.push("Examine manuellement le début, le rythme et la fin de la vidéo « "+(engaged[0].title||engaged[0].video_id)+" » ; son engagement est de "+engaged[0].engagementRate.toFixed(2)+" %, sans preuve que son thème explique ce résultat.");
+  if(ordered.length)tips.push("Prends les meilleures vidéos comme références, mais teste une seule variation créative à la fois pour pouvoir comparer les résultats.");
+  tips.forEach(t=>{
+    const p=document.createElement("p");p.textContent="• "+t;actions.appendChild(p);
+  });
+  const idea = document.getElementById("creativeSuggestion");
+  idea.textContent = ordered.length
+    ? "Teste deux nouvelles vidéos de même durée et de format similaire : une qui reprend la structure de ta vidéo la plus vue (« "+(ordered[0].title||ordered[0].video_id)+" »), et une avec une accroche différente. Compare ensuite leurs vues et leur engagement à ancienneté comparable."
+    : "Les premières recommandations apparaîtront après la synchronisation des vidéos.";
+  window.adviceReport = "Little Elsewhere — bilan statistique\n"+report.join("\n")+"\n\nActions\n"+tips.join("\n")+"\n\n"+idea.textContent;
+}
+document.getElementById("copyAdvice").addEventListener("click",async()=>{
+  const status=document.getElementById("copyAdviceStatus");
+  try {
+    await navigator.clipboard.writeText(window.adviceReport || "Aucune analyse disponible");
+    status.textContent="Bilan copié.";
+  } catch(e) {
+    status.textContent="Copie indisponible dans ce navigateur.";
+  }
+});
+
 function renderTopGainers() {
   const root = document.getElementById("topGainers");
   root.replaceChildren();
