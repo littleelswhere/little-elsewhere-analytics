@@ -871,6 +871,28 @@ async function getStats(env) {
   return {account:ACCOUNT_ID,videoCount:videos.length,totals,lastSync,videos};
 }
 
+async function getHistory(env) {
+  const rows = await env.DB.prepare(`
+    WITH daily_latest AS (
+      SELECT date(recorded_at) AS day, video_id, views,
+        ROW_NUMBER() OVER (
+          PARTITION BY date(recorded_at), video_id
+          ORDER BY recorded_at DESC, id DESC
+        ) AS rn
+      FROM video_stats
+      WHERE recorded_at >= datetime('now', '-30 days')
+    )
+    SELECT day, SUM(views) AS views, COUNT(*) AS videos
+    FROM daily_latest
+    WHERE rn = 1
+    GROUP BY day
+    ORDER BY day ASC
+  `).all();
+  return {days: (rows.results || []).map(r => ({
+    date: r.day, views: Number(r.views || 0), videos: Number(r.videos || 0)
+  }))};
+}
+
 function dashboard() {
 
   return new Response(`<!doctype html>
@@ -1185,6 +1207,13 @@ a { color: #86b9ff; }
 
 
 <section>
+  <h2>Évolution des vues · 30 jours</h2>
+  <p class="muted">Vues cumulées des vidéos relevées chaque jour. Les jours sans relevé ne sont pas inventés.</p>
+  <canvas id="viewsChart" height="260" role="img" aria-label="Graphique des vues cumulées sur les 30 derniers jours" style="width:100%;max-width:100%;display:block"></canvas>
+  <p class="muted" id="historyStatus">Chargement de l'historique...</p>
+</section>
+
+<section>
 
   <h2>Performances par vidéo</h2><label for="sort">Classement : </label><select id="sort"><option value="views">Vues</option><option value="gainViews">Gain de vues</option><option value="engagementRate">Engagement</option><option value="likes">Likes</option></select><p class="muted">Gain depuis le précédent relevé disponible par vidéo.</p>
 
@@ -1330,6 +1359,61 @@ function renderVideos() {
     tbody.appendChild(tr);
   }
 }
+async function loadHistory() {
+  const label = document.getElementById("historyStatus");
+  try {
+    const response = await fetch("/api/history", {cache:"no-store"});
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    const payload = await response.json();
+    const days = payload.days || [];
+    if (!days.length) {
+      label.textContent = "Aucun relevé disponible pour les 30 derniers jours.";
+      return;
+    }
+    const latest = days[days.length - 1];
+    label.textContent = days.length === 1
+      ? "Un seul jour de relevé pour l'instant. La courbe se construira avec les prochains relevés."
+      : days.length + " jours de relevés · Dernier total : " + number(latest.views) + " vues · " + latest.videos + " vidéos relevées le " + latest.date;
+    window.historyDays = days;
+    drawHistory();
+  } catch(error) {
+    label.textContent = "Historique indisponible : " + error.message;
+  }
+}
+function drawHistory() {
+  const days = window.historyDays || [];
+  if (!days.length) return;
+  const canvas = document.getElementById("viewsChart");
+  const width = Math.max(320, canvas.getBoundingClientRect().width || 700);
+  const height = 260, ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width * ratio);
+  canvas.height = Math.round(height * ratio);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(ratio, ratio);
+  const left = 65, right = 16, top = 20, bottom = 42;
+  const values = days.map(d => d.views);
+  let min = Math.min(...values), max = Math.max(...values);
+  const pad = Math.max((max-min)*0.15, max*0.02, 1);
+  min = Math.max(0,min-pad); max += pad;
+  const x = i => left + (width-left-right) * (days.length===1 ? 0.5 : i/(days.length-1));
+  const y = v => top + (height-top-bottom)*(max-v)/(max-min);
+  ctx.font = "12px system-ui"; ctx.textAlign = "right";
+  for(let i=0;i<=4;i++) {
+    const value = min+(max-min)*(4-i)/4, yy=y(value);
+    ctx.strokeStyle="#30415f";ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(width-right,yy);ctx.stroke();
+    ctx.fillStyle="#b2bfda";ctx.fillText(new Intl.NumberFormat("fr-FR",{notation:"compact",maximumFractionDigits:1}).format(value),left-9,yy+4);
+  }
+  ctx.strokeStyle="#7abaff";ctx.lineWidth=3;ctx.lineJoin="round";
+  ctx.beginPath();
+  days.forEach((d,i)=>{if(i===0)ctx.moveTo(x(i),y(d.views));else ctx.lineTo(x(i),y(d.views));});
+  ctx.stroke();
+  days.forEach((d,i)=>{ctx.beginPath();ctx.arc(x(i),y(d.views),3.5,0,Math.PI*2);ctx.fillStyle="#a8d5ff";ctx.fill();});
+  ctx.fillStyle="#b2bfda";ctx.textAlign="left";
+  ctx.fillText(days[0].date.slice(5),left,height-14);
+  ctx.textAlign="right";ctx.fillText(days[days.length-1].date.slice(5),width-right,height-14);
+}
+window.addEventListener("resize",drawHistory);
+
 document.getElementById("sort").addEventListener("change",renderVideos);
 
 document.getElementById("refresh").addEventListener(
@@ -1343,8 +1427,10 @@ document.getElementById("refresh").addEventListener(
 
 
 loadStats();
+loadHistory();
 
 setInterval(loadStats, 60000);
+setInterval(loadHistory, 60000);
 
 </script>
 
@@ -1412,7 +1498,8 @@ export default {
 
     if (url.pathname === "/dashboard" ||
 
-        url.pathname === "/api/stats") {
+        url.pathname === "/api/stats" ||
+        url.pathname === "/api/history") {
 
 
 
@@ -1448,7 +1535,7 @@ export default {
 
       try {
 
-        return json(await getStats(env));
+        return json(url.pathname === "/api/history" ? await getHistory(env) : await getStats(env));
 
       } catch (error) {
 
