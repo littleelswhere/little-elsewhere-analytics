@@ -947,16 +947,38 @@ async function generateAIAdvice(env) {
     "Données TikTok (sélection des plus vues, plus récentes et plus rapides ; elles peuvent se recouper) :",
     JSON.stringify({nombre_total_videos:stats.videoCount,total_vues:stats.totals.views,dernier_releve:stats.lastSync,videos})
   ].join("\\n");
-  const model="gemini-2.5-flash";
-  const response=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+model+":generateContent",{
-    method:"POST",
-    headers:{"Content-Type":"application/json","x-goog-api-key":env.GEMINI_API_KEY},
-    body:JSON.stringify({contents:[{role:"user",parts:[{text:instructions}]}],generationConfig:{maxOutputTokens:6000,temperature:0.7}}),
-    signal:AbortSignal.timeout(45000)
+  const headers={"Content-Type":"application/json","x-goog-api-key":env.GEMINI_API_KEY};
+  const requestBody=JSON.stringify({contents:[{role:"user",parts:[{text:instructions}]}],generationConfig:{maxOutputTokens:6000,temperature:0.7}});
+  const invoke=async model=>fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent",{
+    method:"POST",headers,body:requestBody,signal:AbortSignal.timeout(45000)
   });
+  let model="gemini-2.5-flash";
+  let response=await invoke(model);
+  if(response.status===404){
+    const available=await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=100",{
+      headers:{"x-goog-api-key":env.GEMINI_API_KEY},signal:AbortSignal.timeout(12000)
+    });
+    if(available.ok){
+      const models=await available.json();
+      const choices=(models.models||[]).filter(m=>(m.supportedGenerationMethods||[]).includes("generateContent"))
+        .map(m=>m.name?.replace(/^models\\//,"")).filter(Boolean);
+      const preferred=["gemini-2.5-flash","gemini-2.5-flash-lite","gemini-2.0-flash","gemini-2.0-flash-lite"];
+      const next=preferred.find(name=>name!==model&&choices.includes(name))||choices.find(name=>name!==model&&name.includes("flash"));
+      if(next){model=next;response=await invoke(model);}
+      else return {error:"model_unavailable",message:"Aucun modèle Gemini Flash compatible trouvé pour cette clé API. Vérifie l'accès aux modèles dans Google AI Studio."};
+    }else{
+      return {error:"model_unavailable",message:"Modèle Gemini indisponible (404) et liste des modèles inaccessible ("+available.status+"). Vérifie la clé et le projet Google AI Studio."};
+    }
+  }
   if(!response.ok){
-    console.error("Gemini API status",response.status);
-    return {error:"provider_error",message:response.status===429?"Quota gratuit Gemini atteint. Réessaie plus tard.":response.status===400||response.status===403?"Clé ou accès Gemini refusé. Vérifie GEMINI_API_KEY.":"Gemini a renvoyé une erreur ("+response.status+")."};
+    const errorPayload=await response.json().catch(()=>({}));
+    const reason=String(errorPayload.error?.message||"").slice(0,220);
+    console.error("Gemini API status",response.status,reason);
+    const message=response.status===429?"Quota Gemini atteint. Réessaie plus tard."
+      :response.status===401||response.status===403?"Accès Gemini refusé. Vérifie la clé et les autorisations du projet."
+      :response.status===404?"Le modèle "+model+" n'est pas disponible pour cette clé."
+      :"Gemini a renvoyé une erreur ("+response.status+"). "+reason;
+    return {error:"provider_error",message};
   }
   const payload=await response.json();
   const content=(payload.candidates||[]).flatMap(c=>(c.content?.parts||[]).map(p=>p.text||"")).join("\\n").trim();
