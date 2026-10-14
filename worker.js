@@ -1214,6 +1214,12 @@ a { color: #86b9ff; }
 </section>
 
 <section>
+  <h2>Vidéos qui progressent le plus</h2>
+  <p class="muted">Top 10 des gains de vues entre les deux derniers relevés de chaque vidéo. Les intervalles peuvent différer selon les vidéos.</p>
+  <div id="topGainers" aria-live="polite"><p class="muted">Chargement du classement...</p></div>
+</section>
+
+<section>
 
   <h2>Performances par vidéo</h2><label for="sort">Classement : </label><select id="sort"><option value="views">Vues</option><option value="gainViews">Gain de vues</option><option value="engagementRate">Engagement</option><option value="likes">Likes</option></select><p class="muted">Gain depuis le précédent relevé disponible par vidéo.</p>
 
@@ -1315,6 +1321,7 @@ async function loadStats() {
 
     window.currentVideos = data.videos;
     renderVideos();
+    renderTopGainers();
 
 
 
@@ -1333,6 +1340,43 @@ async function loadStats() {
 }
 
 
+
+function renderTopGainers() {
+  const root = document.getElementById("topGainers");
+  root.replaceChildren();
+  const videos = (window.currentVideos || [])
+    .filter(v => v.gainViews !== null && v.gainViews !== undefined && Number.isFinite(Number(v.gainViews)))
+    .sort((a,b) => Number(b.gainViews)-Number(a.gainViews))
+    .slice(0,10);
+  if (!videos.length) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = "Il faut au moins deux relevés par vidéo pour mesurer leur progression.";
+    root.appendChild(p);
+    return;
+  }
+  const highest = Math.max(1,...videos.map(v=>Math.max(0,Number(v.gainViews))));
+  videos.forEach((video,index) => {
+    const row = document.createElement("div");
+    row.style.cssText = "padding:14px 0;border-bottom:1px solid #2b3a58";
+    const top = document.createElement("div");
+    top.style.cssText = "display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap";
+    const name = document.createElement("span");
+    name.style.cssText = "font-weight:600;overflow-wrap:anywhere";
+    name.textContent = (index+1)+". "+(video.title || video.video_id);
+    const gain = document.createElement("strong");
+    const delta = Number(video.gainViews);
+    gain.textContent = (delta>0?"+":"")+number(delta)+" vues";
+    top.append(name,gain);
+    const track = document.createElement("div");
+    track.style.cssText = "height:9px;background:#263752;border-radius:8px;overflow:hidden;margin-top:10px";
+    const bar = document.createElement("div");
+    bar.style.cssText = "height:100%;background:#65b8ff;border-radius:8px;width:"+Math.max(0,delta)/highest*100+"%";
+    track.appendChild(bar);
+    row.append(top,track);
+    root.appendChild(row);
+  });
+}
 
 function renderVideos() {
   const tbody = document.getElementById("videos");
