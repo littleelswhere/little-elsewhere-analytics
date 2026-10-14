@@ -921,31 +921,26 @@ async function generateAIAdvice(env) {
   if (!env.GEMINI_API_KEY) return {error:"missing_api_key",message:"Ajoute le secret GEMINI_API_KEY dans Cloudflare pour activer l'analyse."};
   const stats=await getStats(env);
   const all=stats.videos||[];
-  const byViews=all.slice().sort((a,b)=>b.views-a.views);
-  const byRecent=all.slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
-  const bySpeed=all.filter(v=>v.viewsPerHour!=null).sort((a,b)=>b.viewsPerHour-a.viewsPerHour);
-  const selected=[...new Map([...byViews.slice(0,15),...byRecent.slice(0,15),...bySpeed.slice(0,10)].map(v=>[v.video_id,v])).values()].slice(0,35);
-  const videos=selected.map(v=>({
-    id:v.video_id,titre:String(v.title||"").slice(0,220),
-    publication:v.created_at,vues:v.views,likes:v.likes,commentaires:v.comments,
-    partages:v.shares,engagement_pourcent:Number(v.engagementRate.toFixed(2)),
-    gain_dernier_releve:v.gainViews,vues_par_heure:v.viewsPerHour,
-    intervalle_heures:v.intervalHours,tendance:v.trend
+  const history=await getHistory(env);
+  const videos=all.map(v=>({
+    titre:String(v.title||"").slice(0,140),date:v.created_at,vues:v.views,
+    likes:v.likes,commentaires:v.comments,partages:v.shares,
+    engagement:Number(v.engagementRate.toFixed(2)),gain:v.gainViews,
+    vues_h:v.viewsPerHour==null?null:Math.round(v.viewsPerHour),tendance:v.trend
   }));
   const instructions=[
-    "Tu es un directeur éditorial et analyste TikTok exigeant pour Little Elsewhere, une série de vidéos IA en monde miniature ultra-réaliste.",
-    "Le style de création : village rural miniature d'Afrique de l'Ouest, adultes minuscules, main géante bienveillante, un seul geste déclencheur, puis un phénomène physique tangible et spectaculaire. La main n'a pas besoin de rester visible. Physique progressive, poids, boue, eau, gravité, échelle lisible, habitants actifs. Ne répète PAS le scénario de l'îlot soulevé.",
-    "Tu reçois seulement des métadonnées et des statistiques, PAS les vidéos. Tu ne peux pas inférer avec certitude ce qui apparaît à l'image. Les titres et hashtags sont des indices imparfaits.",
-    "Analyse réellement les chiffres avant de proposer quoi que ce soit. Ne te contente jamais de conseils génériques du type 'surveille les tendances', 'poste régulièrement' ou 'reproduis ce qui marche'.",
-    "Structure impérative en français :",
-    "1. DIAGNOSTIC CHIFFRÉ : 3 constats précis avec chiffres, titres abrégés et comparaisons explicites ; signale les biais d'ancienneté et d'échantillon.",
-    "2. SURPRISES : jusqu'à 3 vidéos qui surperforment ou sous-performent selon engagement, vues et vitesse, avec chiffres. Ne qualifie pas un résultat de causalité.",
-    "3. HYPOTHÈSES CRÉATIVES : 3 hypothèses falsifiables, fondées sur les titres lorsqu'ils le permettent ; précise ce qu'on ne peut pas savoir sans voir la vidéo ou ses statistiques de rétention.",
-    "4. PROCHAINES VIDÉOS : 3 concepts VRAIMENT distincts et inédits, chacun avec situation de départ, action de la main, mécanique physique qui s'amplifie, payoff final et raison de tester.",
-    "5. PROMPTS FLOW : pour chacun, un prompt complet en anglais, directement copiable, vidéo 9:16 de 8 à 10 secondes, un seul plan continu, smartphone spontané, sans texte ni ralenti, réalisme physique maximal, habitants visibles et actifs, 5 hashtags anglais maximum.",
-    "Privilégie une réponse dense et spécifique, pas de longues généralités. Si les données ne permettent pas une conclusion, dis-le.",
-    "Données TikTok (sélection des plus vues, plus récentes et plus rapides ; elles peuvent se recouper) :",
-    JSON.stringify({nombre_total_videos:stats.videoCount,total_vues:stats.totals.views,dernier_releve:stats.lastSync,videos})
+    "Tu es analyste éditorial TikTok pour Little Elsewhere. Écris en français simple et direct, sans jargon ni grands paragraphes.",
+    "Analyse les statistiques de TOUTES les vidéos et l'historique disponible, pas seulement les succès.",
+    "Tu n'as PAS vu les vidéos. Ne prétends pas connaître leur contenu visuel, la rétention ou le trafic FYP. Les titres sont des indices et non des preuves.",
+    "FORMAT OBLIGATOIRE, cinq sections avec exactement ces titres sur une ligne :",
+    "## EN BREF : une seule phrase de 20 mots maximum, avec le constat le plus utile.",
+    "## 3 CHIFFRES À RETENIR : exactement 3 lignes courtes, chacune avec chiffre concret, comparaison et signification.",
+    "## CE QUI RESTE À VÉRIFIER : 2 hypothèses, explicitement présentées comme telles. Mentionne les limites d'ancienneté et de l'historique.",
+    "## QUOI PUBLIER ENSUITE : exactement 3 idées différentes, chacune avec titre, 2 phrases décrivant le geste de la main, la mécanique physique et le payoff.",
+    "## PROMPTS FLOW : 3 prompts complets en anglais, numérotés et séparés. Pour chaque idée : vidéo 9:16, 8-10 s, plan unique, style smartphone spontané, sans texte ni ralenti, et maximum 5 hashtags anglais.",
+    "Style créatif : monde miniature ouest-africain ultra-réaliste, adultes minuscules actifs, une main géante bienveillante fait un geste simple puis la nature/physique s'amplifie. N'imite pas l'îlot soulevé. Les 3 concepts doivent être vraiment distincts.",
+    "Évite les conseils génériques et les assertions causales non prouvées. Ne répète pas les chiffres inutilement.",
+    JSON.stringify({total_videos:stats.videoCount,totaux:stats.totals,historique:history.days,videos})
   ].join("\\n");
   const headers={"Content-Type":"application/json","x-goog-api-key":env.GEMINI_API_KEY};
   const requestBody=JSON.stringify({contents:[{role:"user",parts:[{text:instructions}]}],generationConfig:{maxOutputTokens:6000,temperature:0.7}});
@@ -1383,7 +1378,7 @@ a { color: #86b9ff; }
   <div id="adviceActions" hidden></div>
   <button type="button" hidden id="copyAdvice" style="margin-top:18px">Copier le bilan</button>
   <button type="button" hidden id="copyAIPrompt" style="margin-top:18px;margin-left:8px">Préparer une analyse IA</button>
-  <p class="muted">L'analyse IA directe envoie les statistiques d'une sélection de 35 vidéos (meilleures, récentes et en progression) à Gemini uniquement lorsque tu cliques sur le bouton. Aucun envoi automatique.</p>
+  <p class="muted">L'analyse IA directe envoie les statistiques de toutes les vidéos suivies et de leur historique disponible à Gemini uniquement lorsque tu cliques sur le bouton. Aucun envoi automatique.</p>
   <button type="button" id="runAI" style="margin-top:12px">Analyser avec Gemini</button>
   <p class="muted" id="aiStatus" aria-live="polite">Prêt pour une analyse à la demande.</p>
   <div id="aiOutput" style="white-space:pre-wrap;line-height:1.7;overflow-wrap:anywhere;background:#101a30;border:1px solid #2b3a58;padding:20px;border-radius:12px" hidden></div>
@@ -1576,6 +1571,28 @@ document.getElementById("copyAdvice").addEventListener("click",async()=>{
   }
 });
 
+function renderAISections(root,content){
+  root.replaceChildren();
+  const sections=String(content||"").split(/(?=^##\\s)/m);
+  for(const section of sections){
+    const trimmed=section.trim();if(!trimmed)continue;
+    const match=trimmed.match(/^##\\s+([^\\n]+)\\n?/);
+    const card=document.createElement("article");
+    card.className="insight-card";card.style.marginBottom="14px";card.style.padding="22px";
+    if(match){
+      const title=document.createElement("h3");title.textContent=match[1];card.appendChild(title);
+    }
+    const text=document.createElement("div");text.style.whiteSpace="pre-wrap";text.style.lineHeight="1.7";
+    text.style.overflowWrap="anywhere";text.textContent=match?trimmed.slice(match[0].length).trim():trimmed;
+    card.appendChild(text);
+    if(match && /PROMPTS FLOW/i.test(match[1])){
+      const button=document.createElement("button");button.type="button";button.textContent="Copier les prompts";button.style.marginTop="16px";
+      button.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(text.textContent);button.textContent="Copié !";}catch(e){button.textContent="Copie indisponible";}});
+      card.appendChild(button);
+    }
+    root.appendChild(card);
+  }
+}
 document.getElementById("runAI").addEventListener("click",async()=>{
   const button=document.getElementById("runAI");
   const status=document.getElementById("aiStatus");
@@ -1586,7 +1603,7 @@ document.getElementById("runAI").addEventListener("click",async()=>{
     const response=await fetch("/api/ai/analyze",{method:"POST",headers:{"Content-Type":"application/json"},cache:"no-store"});
     const data=await response.json();
     if(!response.ok)throw new Error(data.message||"Erreur HTTP "+response.status);
-    output.hidden=false;output.textContent=data.content;
+    output.hidden=false;renderAISections(output,data.content);
     status.textContent="Analyse terminée · "+data.analyzedVideos+" vidéos · "+data.model;
   }catch(error){
     status.textContent=error.message;
