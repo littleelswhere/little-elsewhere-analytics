@@ -1308,6 +1308,9 @@ a { color: #86b9ff; }
   <h2>Actions recommandées</h2>
   <div id="adviceActions"></div>
   <button type="button" id="copyAdvice" style="margin-top:18px">Copier le bilan</button>
+  <button type="button" id="copyAIPrompt" style="margin-top:18px;margin-left:8px">Préparer une analyse IA</button>
+  <p class="muted">Copie un prompt prêt à utiliser dans ChatGPT ou Gemini. Aucun transfert automatique de tes statistiques vers une IA externe.</p>
+  <p class="muted" id="copyAIPromptStatus" aria-live="polite"></p>
   <p class="muted" id="copyAdviceStatus" aria-live="polite"></p>
 </section>
 <section>
@@ -1400,10 +1403,13 @@ async function loadStats() {
 
 
     window.currentVideos = data.videos;
-    renderVideos();
-    renderTopGainers();
-    renderInsights();
-    renderAdvice();
+    for (const [name,render] of [
+      ["tableau",renderVideos],["progression",renderTopGainers],
+      ["indicateurs",renderInsights],["conseils",renderAdvice]
+    ]) {
+      try { render(); }
+      catch (error) { console.error("Erreur d'affichage "+name,error); }
+    }
 
 
 
@@ -1490,6 +1496,35 @@ document.getElementById("copyAdvice").addEventListener("click",async()=>{
     status.textContent="Bilan copié.";
   } catch(e) {
     status.textContent="Copie indisponible dans ce navigateur.";
+  }
+});
+
+document.getElementById("copyAIPrompt").addEventListener("click",async()=>{
+  const status=document.getElementById("copyAIPromptStatus");
+  const videos=(window.currentVideos||[]).slice().sort((a,b)=>b.views-a.views).slice(0,15);
+  const rows=videos.map(v=>({
+    titre:v.title||v.video_id,vues:v.views,likes:v.likes,
+    commentaires:v.comments,partages:v.shares,
+    engagement_pourcent:Number(v.engagementRate||0).toFixed(2),
+    gain_vues:v.gainViews,vues_par_heure:v.viewsPerHour,
+    tendance:v.trend
+  }));
+  const prompt=[
+    "Tu es analyste de performances TikTok pour le compte Little Elsewhere.",
+    "Voici les statistiques des 15 vidéos les plus vues. Les titres peuvent être incomplets.",
+    "Ne prétends pas avoir vu les vidéos ni connaître la rétention, les impressions ou la durée si elles ne figurent pas dans les données.",
+    "Sépare clairement constats mesurés, hypothèses et idées à tester.",
+    "Analyse les facteurs possibles de performance, repère les vidéos à surveiller et propose 5 expériences créatives concrètes.",
+    "Pour chaque expérience, donne un concept original, une accroche visuelle et un prompt Gemini/Flow en anglais pour une vidéo verticale 9:16 de 8 à 10 secondes, un seul plan, sans texte ni ralenti.",
+    "Ne copie pas automatiquement le scénario de la vidéo la plus vue.",
+    "Données :",
+    JSON.stringify(rows,null,2)
+  ].join("\\n");
+  try {
+    await navigator.clipboard.writeText(prompt);
+    status.textContent="Prompt IA copié. Colle-le dans ChatGPT ou Gemini pour obtenir ton analyse.";
+  } catch(error) {
+    status.textContent="Copie automatique impossible. Vérifie les autorisations du navigateur.";
   }
 });
 
