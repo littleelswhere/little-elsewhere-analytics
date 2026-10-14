@@ -1332,7 +1332,7 @@ a { color: #86b9ff; }
   <h2>Toutes les vidéos</h2>
   <div class="filters">
     <label>Rechercher <input id="videoSearch" type="search" placeholder="Titre ou identifiant..." autocomplete="off"></label>
-    <label>Trier par <select id="sort"><option value="views">Vues</option><option value="viewsPerHour">Vues / heure</option><option value="gainViews">Gain de vues</option><option value="engagementRate">Engagement</option><option value="likes">Likes</option></select></label>
+    <label>Trier par <select id="sort"><option value="views">Vues</option><option value="viewsPerHour">Vues / heure</option><option value="gainViews">Gain de vues</option><option value="engagementRate">Engagement</option><option value="likes">Likes</option></select></label>\n    <label>Ordre <select id="sortDirection"><option value="desc">Décroissant ↓</option><option value="asc">Croissant ↑</option></select></label>
     <label>Tendance <select id="trendFilter"><option value="all">Toutes</option><option value="accelerating">En accélération</option><option value="stable">Stables</option><option value="slowing">En ralentissement</option><option value="insufficient">Données insuffisantes</option></select></label>
   </div>
   <p class="muted" id="videoResultCount">Chargement...</p>
@@ -1681,13 +1681,19 @@ function renderTopGainers() {
 function renderVideos() {
   const tbody = document.getElementById("videos");
   tbody.replaceChildren();
-  const key = document.getElementById("sort").value;
+  const key = document.getElementById("sort").value;\n  const direction = document.getElementById("sortDirection").value === "asc" ? 1 : -1;
   const search = document.getElementById("videoSearch").value.trim().toLocaleLowerCase("fr");
   const trend = document.getElementById("trendFilter").value;
   const videos = (window.currentVideos || [])
     .filter(v => (!search || String(v.title || "").toLocaleLowerCase("fr").includes(search) || String(v.video_id).includes(search))
       && (trend === "all" || v.trend === trend))
-    .sort((a,b) => (Number(b[key]) || 0) - (Number(a[key]) || 0));
+    .sort((a,b) => {
+      const av = a[key] == null ? null : Number(a[key]);
+      const bv = b[key] == null ? null : Number(b[key]);
+      if(av == null || !Number.isFinite(av)) return bv == null || !Number.isFinite(bv) ? 0 : 1;
+      if(bv == null || !Number.isFinite(bv)) return -1;
+      return direction * (av-bv);
+    });
   document.getElementById("videoResultCount").textContent = number(videos.length)+" vidéo(s) affichée(s)";
   const fragment = document.createDocumentFragment();
   for(const video of videos) {
@@ -1763,7 +1769,7 @@ function drawHistory() {
 }
 window.addEventListener("resize",drawHistory);
 
-document.getElementById("sort").addEventListener("change",renderVideos);
+document.getElementById("sort").addEventListener("change",renderVideos);\ndocument.getElementById("sortDirection").addEventListener("change",renderVideos);
 document.getElementById("videoSearch").addEventListener("input",renderVideos);
 document.getElementById("trendFilter").addEventListener("change",renderVideos);
 
