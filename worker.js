@@ -918,7 +918,7 @@ async function getHistory(env) {
 }
 
 async function generateAIAdvice(env) {
-  if (!env.OPENAI_API_KEY) return {error:"missing_api_key",message:"Ajoute le secret OPENAI_API_KEY dans Cloudflare pour activer l'analyse."};
+  if (!env.GEMINI_API_KEY) return {error:"missing_api_key",message:"Ajoute le secret GEMINI_API_KEY dans Cloudflare pour activer l'analyse."};
   const stats=await getStats(env);
   const videos=stats.videos.slice().sort((a,b)=>b.views-a.views).slice(0,25)
     .map(v=>({titre:String(v.title||v.video_id).slice(0,180),vues:v.views,likes:v.likes,commentaires:v.comments,partages:v.shares,engagement:Number(v.engagementRate.toFixed(2)),vues_par_heure:v.viewsPerHour,tendance:v.trend}));
@@ -932,20 +932,20 @@ async function generateAIAdvice(env) {
     "Voici les statistiques réelles des vidéos les plus vues :",
     JSON.stringify(videos)
   ].join("\n");
-  const model="gpt-4.1-mini";
-  const response=await fetch("https://api.openai.com/v1/chat/completions",{
+  const model="gemini-2.5-flash";
+  const response=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+model+":generateContent",{
     method:"POST",
-    headers:{"Content-Type":"application/json","Authorization":"Bearer "+env.OPENAI_API_KEY},
-    body:JSON.stringify({model,messages:[{role:"user",content:instructions}],max_completion_tokens:2400,store:false}),
+    headers:{"Content-Type":"application/json","x-goog-api-key":env.GEMINI_API_KEY},
+    body:JSON.stringify({contents:[{role:"user",parts:[{text:instructions}]}],generationConfig:{maxOutputTokens:3500,temperature:0.7}}),
     signal:AbortSignal.timeout(45000)
   });
   if(!response.ok){
-    console.error("OpenAI API status",response.status);
-    return {error:"provider_error",message:response.status===429?"Quota OpenAI atteint. Vérifie la facturation ou réessaie plus tard.":response.status===401?"Clé OpenAI invalide. Vérifie OPENAI_API_KEY.":"OpenAI a renvoyé une erreur ("+response.status+")."};
+    console.error("Gemini API status",response.status);
+    return {error:"provider_error",message:response.status===429?"Quota gratuit Gemini atteint. Réessaie plus tard.":response.status===400||response.status===403?"Clé ou accès Gemini refusé. Vérifie GEMINI_API_KEY.":"Gemini a renvoyé une erreur ("+response.status+")."};
   }
   const payload=await response.json();
-  const content=payload.choices?.[0]?.message?.content?.trim()||"";
-  return content?{content,model,analyzedVideos:videos.length}:{error:"empty_response",message:"ChatGPT n'a pas fourni de texte. Réessaie."};
+  const content=(payload.candidates||[]).flatMap(c=>(c.content?.parts||[]).map(p=>p.text||"")).join("\\n").trim();
+  return content?{content,model,analyzedVideos:videos.length}:{error:"empty_response",message:"Gemini n'a pas fourni de texte. Réessaie."};
 }
 
 function dashboard() {
@@ -1340,8 +1340,8 @@ a { color: #86b9ff; }
   <div id="adviceActions"></div>
   <button type="button" id="copyAdvice" style="margin-top:18px">Copier le bilan</button>
   <button type="button" id="copyAIPrompt" style="margin-top:18px;margin-left:8px">Préparer une analyse IA</button>
-  <p class="muted">L'analyse IA directe envoie les statistiques des 25 vidéos les plus vues à OpenAI uniquement lorsque tu cliques sur le bouton. Aucun envoi automatique.</p>
-  <button type="button" id="runAI" style="margin-top:12px">Analyser avec ChatGPT</button>
+  <p class="muted">L'analyse IA directe envoie les statistiques des 25 vidéos les plus vues à Gemini uniquement lorsque tu cliques sur le bouton. Aucun envoi automatique.</p>
+  <button type="button" id="runAI" style="margin-top:12px">Analyser avec Gemini</button>
   <p class="muted" id="aiStatus" aria-live="polite">Prêt pour une analyse à la demande.</p>
   <div id="aiOutput" style="white-space:pre-wrap;line-height:1.7;overflow-wrap:anywhere;background:#101a30;border:1px solid #2b3a58;padding:20px;border-radius:12px" hidden></div>
   <p class="muted" id="copyAIPromptStatus" aria-live="polite"></p>
@@ -1538,7 +1538,7 @@ document.getElementById("runAI").addEventListener("click",async()=>{
   const status=document.getElementById("aiStatus");
   const output=document.getElementById("aiOutput");
   button.disabled=true;button.textContent="Analyse en cours...";
-  status.textContent="ChatGPT analyse les statistiques TikTok. Cela peut prendre quelques secondes.";
+  status.textContent="Gemini analyse les statistiques TikTok. Cela peut prendre quelques secondes.";
   try{
     const response=await fetch("/api/ai/analyze",{method:"POST",headers:{"Content-Type":"application/json"},cache:"no-store"});
     const data=await response.json();
@@ -1548,7 +1548,7 @@ document.getElementById("runAI").addEventListener("click",async()=>{
   }catch(error){
     status.textContent=error.message;
   }finally{
-    button.disabled=false;button.textContent="Analyser avec ChatGPT";
+    button.disabled=false;button.textContent="Analyser avec Gemini";
   }
 });
 
