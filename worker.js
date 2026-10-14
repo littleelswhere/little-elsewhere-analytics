@@ -69,6 +69,7 @@ a { color: #347fdb; }
 #dashboardTabs .tab-button { background:#1b2944;color:#c4d2e8;border:1px solid #344762; }
 #dashboardTabs .tab-button.active { background:#327ed1;color:white;border-color:#569ce7; }
 #dashboardTabs .tab-button:focus-visible { outline:3px solid #a8d5ff;outline-offset:2px; }
+.filters{display:flex;flex-wrap:wrap;gap:12px;margin:18px 0}.filters label{display:flex;flex-direction:column;gap:6px;color:#cbd7ee;font-size:14px}.filters input,.filters select{background:#101b31;border:1px solid #415473;color:#fff;padding:11px;border-radius:9px;min-width:180px;max-width:100%}.insight-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.insight-card{background:#101a30;border:1px solid #2b3a58;padding:16px;border-radius:12px;min-width:0}.insight-card strong{font-size:26px;display:block;margin-top:8px}.insight-card p{font-size:13px;overflow-wrap:anywhere}.trend-accelerating{color:#8de1af}.trend-slowing{color:#ffc68a}.trend-insufficient{color:#9aaac7}@media(max-width:650px){main{padding:18px 12px}h1{font-size:30px}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.value{font-size:24px}#dashboardTabs .tab-button{flex:1;padding:12px 8px}.table-wrap{overflow-x:auto}} 
 </style>
 
 </head>
@@ -855,7 +856,10 @@ async function getStats(env) {
            s.views, s.likes, s.comments, s.shares,
            (SELECT s2.views FROM video_stats s2
             WHERE s2.video_id = v.video_id AND s2.id <> s.id
-            ORDER BY s2.recorded_at DESC, s2.id DESC LIMIT 1) AS previous_views
+            ORDER BY s2.recorded_at DESC, s2.id DESC LIMIT 1) AS previous_views,
+           (SELECT s2.recorded_at FROM video_stats s2 WHERE s2.video_id = v.video_id AND s2.id <> s.id ORDER BY s2.recorded_at DESC, s2.id DESC LIMIT 1) AS previous_at,
+           (SELECT s2.views FROM video_stats s2 WHERE s2.video_id = v.video_id AND s2.id NOT IN (s.id, (SELECT s3.id FROM video_stats s3 WHERE s3.video_id = v.video_id AND s3.id <> s.id ORDER BY s3.recorded_at DESC, s3.id DESC LIMIT 1)) ORDER BY s2.recorded_at DESC, s2.id DESC LIMIT 1) AS older_views,
+           (SELECT s2.recorded_at FROM video_stats s2 WHERE s2.video_id = v.video_id AND s2.id NOT IN (s.id, (SELECT s3.id FROM video_stats s3 WHERE s3.video_id = v.video_id AND s3.id <> s.id ORDER BY s3.recorded_at DESC, s3.id DESC LIMIT 1)) ORDER BY s2.recorded_at DESC, s2.id DESC LIMIT 1) AS older_at
     FROM videos v JOIN video_stats s ON s.id = (
       SELECT s3.id FROM video_stats s3 WHERE s3.video_id = v.video_id
       ORDER BY s3.recorded_at DESC, s3.id DESC LIMIT 1
@@ -864,8 +868,18 @@ async function getStats(env) {
   const videos = (result.results || []).map(v => {
     const views = Number(v.views || 0), likes = Number(v.likes || 0),
           comments = Number(v.comments || 0), shares = Number(v.shares || 0);
-    return {...v, views, likes, comments, shares,
-      gainViews: v.previous_views == null ? null : views - Number(v.previous_views),
+    const hours = v.previous_at ? (Date.parse(v.recorded_at + "Z") - Date.parse(v.previous_at + "Z")) / 3600000 : 0;
+    const olderHours = v.older_at && v.previous_at ? (Date.parse(v.previous_at + "Z") - Date.parse(v.older_at + "Z")) / 3600000 : 0;
+    const gain = v.previous_views == null ? null : views - Number(v.previous_views);
+    const velocity = hours > 0 && gain >= 0 ? gain / hours : null;
+    const oldGain = v.older_views == null || v.previous_views == null ? null : Number(v.previous_views) - Number(v.older_views);
+    const oldVelocity = olderHours > 0 && oldGain >= 0 ? oldGain / olderHours : null;
+    const trend = velocity == null || oldVelocity == null || hours < 0.1 || olderHours < 0.1
+      ? "insufficient" : oldVelocity < 1 && velocity < 1 ? "stable"
+      : velocity > oldVelocity * 1.25 && velocity - oldVelocity >= 5 ? "accelerating"
+      : velocity < oldVelocity * 0.75 && oldVelocity - velocity >= 5 ? "slowing" : "stable";
+    return {...v, views, likes, comments, shares, gainViews:gain, viewsPerHour:velocity,
+      trend, intervalHours:hours > 0 ? hours : null,
       engagementRate: views ? (likes + comments + shares) * 100 / views : 0};
   });
   const totals = videos.reduce((a,v) => {
@@ -1217,6 +1231,10 @@ a { color: #86b9ff; }
 
 
 
+<section>
+  <h2>À retenir</h2>
+  <div id="insights" class="insight-grid"><p class="muted">Analyse des performances en cours...</p></div>
+</section>
 </div>
 <div class="tab-panel" data-panel="history" hidden>
 <section>
@@ -1236,7 +1254,13 @@ a { color: #86b9ff; }
 
 <section>
 
-  <h2>Performances par vidéo</h2><label for="sort">Classement : </label><select id="sort"><option value="views">Vues</option><option value="gainViews">Gain de vues</option><option value="engagementRate">Engagement</option><option value="likes">Likes</option></select><p class="muted">Gain depuis le précédent relevé disponible par vidéo.</p>
+  <h2>Toutes les vidéos</h2>
+  <div class="filters">
+    <label>Rechercher <input id="videoSearch" type="search" placeholder="Titre ou identifiant..." autocomplete="off"></label>
+    <label>Trier par <select id="sort"><option value="views">Vues</option><option value="viewsPerHour">Vues / heure</option><option value="gainViews">Gain de vues</option><option value="engagementRate">Engagement</option><option value="likes">Likes</option></select></label>
+    <label>Tendance <select id="trendFilter"><option value="all">Toutes</option><option value="accelerating">En accélération</option><option value="stable">Stables</option><option value="slowing">En ralentissement</option><option value="insufficient">Données insuffisantes</option></select></label>
+  </div>
+  <p class="muted" id="videoResultCount">Chargement...</p>
 
   <div class="table-wrap">
 
@@ -1254,7 +1278,7 @@ a { color: #86b9ff; }
 
           <th>Commentaires</th>
 
-          <th>Partages</th><th>Gain vues</th><th>Engagement</th>
+          <th>Partages</th><th>Gain vues</th><th>Vues / h</th><th>Tendance</th><th>Engagement</th>
 
         </tr>
 
@@ -1354,6 +1378,7 @@ async function loadStats() {
     window.currentVideos = data.videos;
     renderVideos();
     renderTopGainers();
+    renderInsights();
 
 
 
@@ -1373,6 +1398,26 @@ async function loadStats() {
 
 
 
+function renderInsights() {
+  const root = document.getElementById("insights");
+  root.replaceChildren();
+  const all = window.currentVideos || [];
+  const accelerating = all.filter(v=>v.trend==="accelerating").sort((a,b)=>(b.viewsPerHour||0)-(a.viewsPerHour||0));
+  const measured = all.filter(v=>v.viewsPerHour!==null && v.viewsPerHour!==undefined);
+  const top = measured.slice().sort((a,b)=>b.viewsPerHour-a.viewsPerHour)[0];
+  const summaries = [
+    ["Vidéos en accélération",String(accelerating.length),accelerating.length?"À surveiller dans l'onglet Vidéos":"Aucune accélération confirmée pour l'instant"],
+    ["Meilleure vitesse",top?number(Math.round(top.viewsPerHour))+" vues/h":"—",top?(top.title||top.video_id):"En attente de deux relevés espacés"],
+    ["Vidéos mesurables",number(measured.length)+" / "+number(all.length),"Les autres attendent des relevés supplémentaires"]
+  ];
+  summaries.forEach(([name,value,detail])=>{
+    const card=document.createElement("article");card.className="insight-card";
+    const label=document.createElement("div");label.className="muted";label.textContent=name;
+    const strong=document.createElement("strong");strong.textContent=value;
+    const p=document.createElement("p");p.className="muted";p.textContent=detail;
+    card.append(label,strong,p);root.appendChild(card);
+  });
+}
 function renderTopGainers() {
   const root = document.getElementById("topGainers");
   root.replaceChildren();
@@ -1414,26 +1459,31 @@ function renderVideos() {
   const tbody = document.getElementById("videos");
   tbody.replaceChildren();
   const key = document.getElementById("sort").value;
-  const videos = [...(window.currentVideos || [])].sort((a,b) =>
-    (Number(b[key]) || 0) - (Number(a[key]) || 0));
+  const search = document.getElementById("videoSearch").value.trim().toLocaleLowerCase("fr");
+  const trend = document.getElementById("trendFilter").value;
+  const videos = (window.currentVideos || [])
+    .filter(v => (!search || String(v.title || "").toLocaleLowerCase("fr").includes(search) || String(v.video_id).includes(search))
+      && (trend === "all" || v.trend === trend))
+    .sort((a,b) => (Number(b[key]) || 0) - (Number(a[key]) || 0));
+  document.getElementById("videoResultCount").textContent = number(videos.length)+" vidéo(s) affichée(s)";
+  const fragment = document.createDocumentFragment();
   for(const video of videos) {
     const tr = document.createElement("tr");
-    const title = document.createElement("td");
-    title.textContent = video.title || video.video_id;
-    tr.appendChild(title);
-    for(const key of ["views","likes","comments","shares"]) {
-      const td = document.createElement("td");
-      td.textContent = number(video[key]);
+    const values = [
+      video.title || video.video_id, number(video.views),number(video.likes),number(video.comments),number(video.shares),
+      video.gainViews == null ? "—" : (video.gainViews > 0 ? "+" : "")+number(video.gainViews),
+      video.viewsPerHour == null ? "—" : number(Math.round(video.viewsPerHour)),
+      ({accelerating:"↗ Accélération",stable:"→ Stable",slowing:"↘ Ralentissement",insufficient:"À mesurer"})[video.trend] || "À mesurer",
+      Number(video.engagementRate || 0).toFixed(2)+" %"
+    ];
+    values.forEach((value,i)=>{
+      const td=document.createElement("td");td.textContent=value;
+      if(i===7)td.className="trend-"+video.trend;
       tr.appendChild(td);
-    }
-    const gain = document.createElement("td");
-    gain.textContent = video.gainViews == null ? "—" : (video.gainViews >= 0 ? "+" : "") + number(video.gainViews);
-    tr.appendChild(gain);
-    const rate = document.createElement("td");
-    rate.textContent = Number(video.engagementRate || 0).toFixed(2) + " %";
-    tr.appendChild(rate);
-    tbody.appendChild(tr);
+    });
+    fragment.appendChild(tr);
   }
+  tbody.appendChild(fragment);
 }
 async function loadHistory() {
   const label = document.getElementById("historyStatus");
@@ -1491,6 +1541,8 @@ function drawHistory() {
 window.addEventListener("resize",drawHistory);
 
 document.getElementById("sort").addEventListener("change",renderVideos);
+document.getElementById("videoSearch").addEventListener("input",renderVideos);
+document.getElementById("trendFilter").addEventListener("change",renderVideos);
 
 document.getElementById("refresh").addEventListener(
 
