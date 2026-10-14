@@ -64,6 +64,11 @@ body {
 
 a { color: #347fdb; }
 
+
+.tab-panel[hidden] { display:none !important; }
+#dashboardTabs .tab-button { background:#1b2944;color:#c4d2e8;border:1px solid #344762; }
+#dashboardTabs .tab-button.active { background:#327ed1;color:white;border-color:#569ce7; }
+#dashboardTabs .tab-button:focus-visible { outline:3px solid #a8d5ff;outline-offset:2px; }
 </style>
 
 </head>
@@ -1192,6 +1197,12 @@ a { color: #86b9ff; }
 
 
 
+<nav id="dashboardTabs" aria-label="Navigation du dashboard" style="display:flex;gap:8px;flex-wrap:wrap;margin:24px 0">
+<button type="button" class="tab-button active" data-tab="overview" aria-selected="true">Vue d'ensemble</button>
+<button type="button" class="tab-button" data-tab="videos" aria-selected="false">Vidéos</button>
+<button type="button" class="tab-button" data-tab="history" aria-selected="false">Évolution</button>
+</nav>
+<div class="tab-panel" data-panel="overview">
 <section>
 
   <h2>Vue d'ensemble</h2>
@@ -1206,6 +1217,8 @@ a { color: #86b9ff; }
 
 
 
+</div>
+<div class="tab-panel" data-panel="history" hidden>
 <section>
   <h2>Évolution des vues · 30 jours</h2>
   <p class="muted">Vues cumulées des vidéos relevées chaque jour. Les jours sans relevé ne sont pas inventés.</p>
@@ -1213,6 +1226,8 @@ a { color: #86b9ff; }
   <p class="muted" id="historyStatus">Chargement de l'historique...</p>
 </section>
 
+</div>
+<div class="tab-panel" data-panel="videos" hidden>
 <section>
   <h2>Vidéos qui progressent le plus</h2>
   <p class="muted">Top 10 des gains de vues entre les deux derniers relevés de chaque vidéo. Les intervalles peuvent différer selon les vidéos.</p>
@@ -1252,12 +1267,29 @@ a { color: #86b9ff; }
   </div>
 
 </section>
+</div>
 
 </main>
 
 
 
 <script>
+
+function showTab(tab) {
+  document.querySelectorAll(".tab-panel").forEach(panel => {
+    panel.hidden = panel.dataset.panel !== tab;
+  });
+  document.querySelectorAll("#dashboardTabs .tab-button").forEach(button => {
+    const selected = button.dataset.tab === tab;
+    button.classList.toggle("active",selected);
+    button.setAttribute("aria-selected",String(selected));
+  });
+  if(tab === "history") drawHistory();
+}
+document.querySelectorAll("#dashboardTabs .tab-button").forEach(button => {
+  button.addEventListener("click",()=>showTab(button.dataset.tab));
+});
+showTab("overview");
 
 const number = n => new Intl.NumberFormat("fr-FR").format(n || 0);
 
