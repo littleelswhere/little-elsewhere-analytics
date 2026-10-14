@@ -961,7 +961,7 @@ async function generateAIAdvice(env) {
     if(available.ok){
       const models=await available.json();
       const choices=(models.models||[]).filter(m=>(m.supportedGenerationMethods||[]).includes("generateContent"))
-        .map(m=>m.name?.replace(/^models\\//,"")).filter(Boolean);
+        .map(m=>m.name?.startsWith("models/")?m.name.slice(7):m.name).filter(Boolean);
       const preferred=["gemini-2.5-flash","gemini-2.5-flash-lite","gemini-2.0-flash","gemini-2.0-flash-lite"];
       const next=preferred.find(name=>name!==model&&choices.includes(name))||choices.find(name=>name!==model&&name.includes("flash"));
       if(next){model=next;response=await invoke(model);}
