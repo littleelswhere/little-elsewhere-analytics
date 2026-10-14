@@ -871,7 +871,7 @@ async function getStats(env) {
     const parseTime = value => {
       if (!value) return NaN;
       const t = String(value).trim().replace(" ", "T");
-      return Date.parse(/[zZ]$|[+-]\\d\\d:\\d\\d$/.test(t) ? t : t + "Z");
+      return Date.parse(t.endsWith("Z") || t.endsWith("z") || t.includes("+") || (t.lastIndexOf("-") > 9) ? t : t + "Z");
     };
     const hours = v.previous_at ? (parseTime(v.recorded_at) - parseTime(v.previous_at)) / 3600000 : 0;
     const olderHours = v.older_at && v.previous_at ? (parseTime(v.previous_at) - parseTime(v.older_at)) / 3600000 : 0;
