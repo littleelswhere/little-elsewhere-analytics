@@ -920,23 +920,38 @@ async function getHistory(env) {
 async function generateAIAdvice(env) {
   if (!env.GEMINI_API_KEY) return {error:"missing_api_key",message:"Ajoute le secret GEMINI_API_KEY dans Cloudflare pour activer l'analyse."};
   const stats=await getStats(env);
-  const videos=stats.videos.slice().sort((a,b)=>b.views-a.views).slice(0,25)
-    .map(v=>({titre:String(v.title||v.video_id).slice(0,180),vues:v.views,likes:v.likes,commentaires:v.comments,partages:v.shares,engagement:Number(v.engagementRate.toFixed(2)),vues_par_heure:v.viewsPerHour,tendance:v.trend}));
+  const all=stats.videos||[];
+  const byViews=all.slice().sort((a,b)=>b.views-a.views);
+  const byRecent=all.slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
+  const bySpeed=all.filter(v=>v.viewsPerHour!=null).sort((a,b)=>b.viewsPerHour-a.viewsPerHour);
+  const selected=[...new Map([...byViews.slice(0,15),...byRecent.slice(0,15),...bySpeed.slice(0,10)].map(v=>[v.video_id,v])).values()].slice(0,35);
+  const videos=selected.map(v=>({
+    id:v.video_id,titre:String(v.title||"").slice(0,220),
+    publication:v.created_at,vues:v.views,likes:v.likes,commentaires:v.comments,
+    partages:v.shares,engagement_pourcent:Number(v.engagementRate.toFixed(2)),
+    gain_dernier_releve:v.gainViews,vues_par_heure:v.viewsPerHour,
+    intervalle_heures:v.intervalHours,tendance:v.trend
+  }));
   const instructions=[
-    "Tu es un analyste TikTok expert du compte Little Elsewhere, qui crée des vidéos IA miniatures, réalistes, très visuelles et satisfaisantes.",
-    "Réponds en français, avec des titres Markdown courts. Structure : Diagnostic, Vidéos à surveiller, 3 actions prioritaires, 3 concepts originaux à tester, 3 prompts Gemini/Flow complets en anglais.",
-    "Prompts : vidéo verticale 9:16, 8-10 secondes, un seul plan, sans texte ni ralenti, physique tangible, action visuelle immédiate.",
-    "Ne déduis pas le contenu visuel à partir des seuls titres, ne prétends pas avoir visionné les vidéos, n'invente pas rétention, impressions ni résultats.",
-    "Sépare constats, hypothèses et expérimentations. Les vitesses sont fondées sur les derniers relevés et ne sont pas comparables à ancienneté égale.",
-    "Ne reprends pas mécaniquement le même scénario pour toutes les idées.",
-    "Voici les statistiques réelles des vidéos les plus vues :",
-    JSON.stringify(videos)
-  ].join("\n");
+    "Tu es un directeur éditorial et analyste TikTok exigeant pour Little Elsewhere, une série de vidéos IA en monde miniature ultra-réaliste.",
+    "Le style de création : village rural miniature d'Afrique de l'Ouest, adultes minuscules, main géante bienveillante, un seul geste déclencheur, puis un phénomène physique tangible et spectaculaire. La main n'a pas besoin de rester visible. Physique progressive, poids, boue, eau, gravité, échelle lisible, habitants actifs. Ne répète PAS le scénario de l'îlot soulevé.",
+    "Tu reçois seulement des métadonnées et des statistiques, PAS les vidéos. Tu ne peux pas inférer avec certitude ce qui apparaît à l'image. Les titres et hashtags sont des indices imparfaits.",
+    "Analyse réellement les chiffres avant de proposer quoi que ce soit. Ne te contente jamais de conseils génériques du type 'surveille les tendances', 'poste régulièrement' ou 'reproduis ce qui marche'.",
+    "Structure impérative en français :",
+    "1. DIAGNOSTIC CHIFFRÉ : 3 constats précis avec chiffres, titres abrégés et comparaisons explicites ; signale les biais d'ancienneté et d'échantillon.",
+    "2. SURPRISES : jusqu'à 3 vidéos qui surperforment ou sous-performent selon engagement, vues et vitesse, avec chiffres. Ne qualifie pas un résultat de causalité.",
+    "3. HYPOTHÈSES CRÉATIVES : 3 hypothèses falsifiables, fondées sur les titres lorsqu'ils le permettent ; précise ce qu'on ne peut pas savoir sans voir la vidéo ou ses statistiques de rétention.",
+    "4. PROCHAINES VIDÉOS : 3 concepts VRAIMENT distincts et inédits, chacun avec situation de départ, action de la main, mécanique physique qui s'amplifie, payoff final et raison de tester.",
+    "5. PROMPTS FLOW : pour chacun, un prompt complet en anglais, directement copiable, vidéo 9:16 de 8 à 10 secondes, un seul plan continu, smartphone spontané, sans texte ni ralenti, réalisme physique maximal, habitants visibles et actifs, 5 hashtags anglais maximum.",
+    "Privilégie une réponse dense et spécifique, pas de longues généralités. Si les données ne permettent pas une conclusion, dis-le.",
+    "Données TikTok (sélection des plus vues, plus récentes et plus rapides ; elles peuvent se recouper) :",
+    JSON.stringify({nombre_total_videos:stats.videoCount,total_vues:stats.totals.views,dernier_releve:stats.lastSync,videos})
+  ].join("\\n");
   const model="gemini-2.5-flash";
   const response=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+model+":generateContent",{
     method:"POST",
     headers:{"Content-Type":"application/json","x-goog-api-key":env.GEMINI_API_KEY},
-    body:JSON.stringify({contents:[{role:"user",parts:[{text:instructions}]}],generationConfig:{maxOutputTokens:3500,temperature:0.7}}),
+    body:JSON.stringify({contents:[{role:"user",parts:[{text:instructions}]}],generationConfig:{maxOutputTokens:6000,temperature:0.7}}),
     signal:AbortSignal.timeout(45000)
   });
   if(!response.ok){
@@ -1330,24 +1345,24 @@ a { color: #86b9ff; }
 </section>
 </div>
 <div class="tab-panel" data-panel="advice" hidden>
-<section>
+<section hidden>
   <h2>Conseils pour les prochaines vidéos</h2>
   <p class="muted">Analyse automatique fondée sur les statistiques TikTok disponibles. Ce module n'utilise pas encore de modèle d'IA générative et ne peut pas analyser le contenu visuel des vidéos.</p>
   <div id="adviceSummary" class="insight-grid" aria-live="polite"><p class="muted">Analyse en cours...</p></div>
 </section>
 <section>
-  <h2>Actions recommandées</h2>
-  <div id="adviceActions"></div>
-  <button type="button" id="copyAdvice" style="margin-top:18px">Copier le bilan</button>
-  <button type="button" id="copyAIPrompt" style="margin-top:18px;margin-left:8px">Préparer une analyse IA</button>
-  <p class="muted">L'analyse IA directe envoie les statistiques des 25 vidéos les plus vues à Gemini uniquement lorsque tu cliques sur le bouton. Aucun envoi automatique.</p>
+  <h2>Analyse éditoriale IA</h2>
+  <div id="adviceActions" hidden></div>
+  <button type="button" hidden id="copyAdvice" style="margin-top:18px">Copier le bilan</button>
+  <button type="button" hidden id="copyAIPrompt" style="margin-top:18px;margin-left:8px">Préparer une analyse IA</button>
+  <p class="muted">L'analyse IA directe envoie les statistiques d'une sélection de 35 vidéos (meilleures, récentes et en progression) à Gemini uniquement lorsque tu cliques sur le bouton. Aucun envoi automatique.</p>
   <button type="button" id="runAI" style="margin-top:12px">Analyser avec Gemini</button>
   <p class="muted" id="aiStatus" aria-live="polite">Prêt pour une analyse à la demande.</p>
   <div id="aiOutput" style="white-space:pre-wrap;line-height:1.7;overflow-wrap:anywhere;background:#101a30;border:1px solid #2b3a58;padding:20px;border-radius:12px" hidden></div>
   <p class="muted" id="copyAIPromptStatus" aria-live="polite"></p>
   <p class="muted" id="copyAdviceStatus" aria-live="polite"></p>
 </section>
-<section>
+<section hidden>
   <h2>Idée de test créatif</h2>
   <p class="muted" id="creativeSuggestion">En attente des statistiques...</p>
   <p class="muted">Il s'agit d'une piste de test, pas d'une prédiction de performance. La classification automatique des thèmes et la génération de prompts nécessiteront une connexion IA dédiée.</p>
