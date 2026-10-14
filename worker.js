@@ -917,6 +917,36 @@ async function getHistory(env) {
   }))};
 }
 
+async function generateAIAdvice(env) {
+  if (!env.GEMINI_API_KEY) return {error:"missing_api_key",message:"Ajoute le secret GEMINI_API_KEY dans Cloudflare pour activer l'analyse."};
+  const stats=await getStats(env);
+  const videos=stats.videos.slice().sort((a,b)=>b.views-a.views).slice(0,25)
+    .map(v=>({titre:String(v.title||v.video_id).slice(0,180),vues:v.views,likes:v.likes,commentaires:v.comments,partages:v.shares,engagement:Number(v.engagementRate.toFixed(2)),vues_par_heure:v.viewsPerHour,tendance:v.trend}));
+  const instructions=[
+    "Tu es un analyste TikTok expert du compte Little Elsewhere, qui crée des vidéos IA miniatures, réalistes, très visuelles et satisfaisantes.",
+    "Réponds en français, avec des titres Markdown courts. Structure : Diagnostic, Vidéos à surveiller, 3 actions prioritaires, 3 concepts originaux à tester, 3 prompts Gemini/Flow complets en anglais.",
+    "Prompts : vidéo verticale 9:16, 8-10 secondes, un seul plan, sans texte ni ralenti, physique tangible, action visuelle immédiate.",
+    "Ne déduis pas le contenu visuel à partir des seuls titres, ne prétends pas avoir visionné les vidéos, n'invente pas rétention, impressions ni résultats.",
+    "Sépare constats, hypothèses et expérimentations. Les vitesses sont fondées sur les derniers relevés et ne sont pas comparables à ancienneté égale.",
+    "Ne reprends pas mécaniquement le même scénario pour toutes les idées.",
+    "Voici les statistiques réelles des vidéos les plus vues :",
+    JSON.stringify(videos)
+  ].join("\n");
+  const response=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","x-goog-api-key":env.GEMINI_API_KEY},
+    body:JSON.stringify({contents:[{role:"user",parts:[{text:instructions}]}],generationConfig:{maxOutputTokens:2200,temperature:0.7}}),
+    signal:AbortSignal.timeout(45000)
+  });
+  if(!response.ok){
+    console.error("Gemini API status",response.status);
+    return {error:"provider_error",message:response.status===429?"Limite Gemini atteinte. Réessaie plus tard.":"Gemini a renvoyé une erreur ("+response.status+"). Vérifie la clé et le quota."};
+  }
+  const payload=await response.json();
+  const content=(payload.candidates||[]).flatMap(c=>(c.content?.parts||[]).map(p=>p.text||"")).join("\n").trim();
+  return content?{content,model:"gemini-3.5-flash",analyzedVideos:videos.length}:{error:"empty_response",message:"Gemini n'a pas fourni de texte. Réessaie."};
+}
+
 function dashboard() {
 
   return new Response(`<!doctype html>
@@ -1309,7 +1339,10 @@ a { color: #86b9ff; }
   <div id="adviceActions"></div>
   <button type="button" id="copyAdvice" style="margin-top:18px">Copier le bilan</button>
   <button type="button" id="copyAIPrompt" style="margin-top:18px;margin-left:8px">Préparer une analyse IA</button>
-  <p class="muted">Copie un prompt prêt à utiliser dans ChatGPT ou Gemini. Aucun transfert automatique de tes statistiques vers une IA externe.</p>
+  <p class="muted">L'analyse IA directe envoie les statistiques des 25 vidéos les plus vues à Gemini uniquement lorsque tu cliques sur le bouton. Aucun envoi automatique.</p>
+  <button type="button" id="runAI" style="margin-top:12px">Analyser avec Gemini</button>
+  <p class="muted" id="aiStatus" aria-live="polite">Prêt pour une analyse à la demande.</p>
+  <div id="aiOutput" style="white-space:pre-wrap;line-height:1.7;overflow-wrap:anywhere;background:#101a30;border:1px solid #2b3a58;padding:20px;border-radius:12px" hidden></div>
   <p class="muted" id="copyAIPromptStatus" aria-live="polite"></p>
   <p class="muted" id="copyAdviceStatus" aria-live="polite"></p>
 </section>
@@ -1496,6 +1529,25 @@ document.getElementById("copyAdvice").addEventListener("click",async()=>{
     status.textContent="Bilan copié.";
   } catch(e) {
     status.textContent="Copie indisponible dans ce navigateur.";
+  }
+});
+
+document.getElementById("runAI").addEventListener("click",async()=>{
+  const button=document.getElementById("runAI");
+  const status=document.getElementById("aiStatus");
+  const output=document.getElementById("aiOutput");
+  button.disabled=true;button.textContent="Analyse en cours...";
+  status.textContent="Gemini analyse les statistiques TikTok. Cela peut prendre quelques secondes.";
+  try{
+    const response=await fetch("/api/ai/analyze",{method:"POST",headers:{"Content-Type":"application/json"},cache:"no-store"});
+    const data=await response.json();
+    if(!response.ok)throw new Error(data.message||"Erreur HTTP "+response.status);
+    output.hidden=false;output.textContent=data.content;
+    status.textContent="Analyse terminée · "+data.analyzedVideos+" vidéos · "+data.model;
+  }catch(error){
+    status.textContent=error.message;
+  }finally{
+    button.disabled=false;button.textContent="Analyser avec Gemini";
   }
 });
 
@@ -1737,7 +1789,8 @@ export default {
     if (url.pathname === "/dashboard" ||
 
         url.pathname === "/api/stats" ||
-        url.pathname === "/api/history") {
+        url.pathname === "/api/history" ||
+        url.pathname === "/api/ai/analyze") {
 
 
 
@@ -1770,6 +1823,19 @@ export default {
       }
 
 
+
+      if (url.pathname === "/api/ai/analyze") {
+        if(request.method !== "POST") return json({error:"method_not_allowed"},405);
+        const origin=request.headers.get("Origin");
+        if(origin && origin!==url.origin) return json({error:"forbidden_origin"},403);
+        try {
+          const result=await generateAIAdvice(env);
+          return json(result,result.error?(result.error==="missing_api_key"?503:502):200);
+        } catch(error) {
+          console.error("AI analysis error",error.message);
+          return json({error:"ai_unavailable",message:"Analyse IA indisponible. Réessaie plus tard."},503);
+        }
+      }
 
       try {
 
