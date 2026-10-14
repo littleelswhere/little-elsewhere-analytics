@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Connexion TikTok – Little Elsewhere Analytics</title>
+  <style>
+    body {font-family:system-ui,-apple-system,sans-serif;max-width:650px;margin:12vh auto;padding:0 24px;line-height:1.6;color:#202124}
+    .notice {padding:18px;border:1px solid #ddd;border-radius:12px;background:#fafafa}
+  </style>
+</head>
+<body>
+  <h1>Connexion TikTok</h1>
+  <div class="notice" id="status">Vérification du retour TikTok…</div>
+  <p><a href="./">Retour à Little Elsewhere Analytics</a></p>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const status = document.getElementById('status');
+    if (params.has('error')) {
+      status.textContent = 'La connexion TikTok a été annulée ou refusée. Vous pouvez revenir à l’accueil.';
+    } else if (params.has('code')) {
+      status.textContent = 'Autorisation TikTok reçue. La connexion n’est pas encore finalisée : le service sécurisé de traitement doit être configuré.';
+    } else {
+      status.textContent = 'Cette page est réservée au retour de connexion TikTok. Le service de connexion est en cours de configuration.';
+    }
+    // Do not display, persist, or transmit authorization codes in this static page.
+    if (window.location.search) window.history.replaceState(null, '', window.location.pathname);
+  </script>
+</body>
+</html>
