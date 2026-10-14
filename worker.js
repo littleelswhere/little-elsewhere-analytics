@@ -957,11 +957,16 @@ async function generateAIAdvice(env) {
     return {error:"models_unavailable",message:"Impossible de consulter les modèles Gemini (HTTP "+available.status+"). "+String(err.error?.message||"Vérifie la clé API et les restrictions du projet.").slice(0,350)};
   }
   const models=await available.json();
-  const choices=(models.models||[]).filter(m=>(m.supportedGenerationMethods||[]).includes("generateContent"))
-    .map(m=>m.name?.startsWith("models/")?m.name.slice(7):m.name).filter(Boolean);
+  const choices=(models.models||[])
+    .filter(m=>(m.supportedGenerationMethods||[]).includes("generateContent"))
+    .map(m=>m.name?.startsWith("models/")?m.name.slice(7):m.name)
+    .filter(name=>name && /^gemini-/i.test(name) &&
+      !/(tts|audio|speech|live|image|embedding|robotics|computer-use|native-audio)/i.test(name));
   const preferred=["gemini-2.5-flash","gemini-2.5-flash-lite","gemini-2.0-flash","gemini-2.0-flash-lite"];
-  const candidates=[...preferred.filter(m=>choices.includes(m)),...choices.filter(m=>m.includes("flash")&&!preferred.includes(m))].slice(0,4);
-  if(!candidates.length)return {error:"model_unavailable",message:"Aucun modèle Flash utilisable trouvé dans la liste de cette clé API."};
+  const candidates=[...preferred.filter(m=>choices.includes(m)),
+    ...choices.filter(m=>/flash/i.test(m)&&!preferred.includes(m))]
+    .slice(0,6);
+  if(!candidates.length)return {error:"model_unavailable",message:"Aucun modèle Gemini Flash textuel trouvé pour cette clé. Les modèles audio/TTS sont exclus."};
   let model="",response=null,reason="",attempts=[];
   for(const candidate of candidates){
     for(const version of ["v1beta","v1"]){
