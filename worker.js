@@ -868,8 +868,13 @@ async function getStats(env) {
   const videos = (result.results || []).map(v => {
     const views = Number(v.views || 0), likes = Number(v.likes || 0),
           comments = Number(v.comments || 0), shares = Number(v.shares || 0);
-    const hours = v.previous_at ? (Date.parse(v.recorded_at + "Z") - Date.parse(v.previous_at + "Z")) / 3600000 : 0;
-    const olderHours = v.older_at && v.previous_at ? (Date.parse(v.previous_at + "Z") - Date.parse(v.older_at + "Z")) / 3600000 : 0;
+    const parseTime = value => {
+      if (!value) return NaN;
+      const t = String(value).trim().replace(" ", "T");
+      return Date.parse(/[zZ]$|[+-]\\d\\d:\\d\\d$/.test(t) ? t : t + "Z");
+    };
+    const hours = v.previous_at ? (parseTime(v.recorded_at) - parseTime(v.previous_at)) / 3600000 : 0;
+    const olderHours = v.older_at && v.previous_at ? (parseTime(v.previous_at) - parseTime(v.older_at)) / 3600000 : 0;
     const gain = v.previous_views == null ? null : views - Number(v.previous_views);
     const velocity = hours > 0 && gain >= 0 ? gain / hours : null;
     const oldGain = v.older_views == null || v.previous_views == null ? null : Number(v.previous_views) - Number(v.older_views);
