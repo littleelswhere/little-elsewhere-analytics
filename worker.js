@@ -1481,7 +1481,7 @@ function renderAdvice() {
   idea.textContent = ordered.length
     ? "Teste deux nouvelles vidéos de même durée et de format similaire : une qui reprend la structure de ta vidéo la plus vue (« "+(ordered[0].title||ordered[0].video_id)+" »), et une avec une accroche différente. Compare ensuite leurs vues et leur engagement à ancienneté comparable."
     : "Les premières recommandations apparaîtront après la synchronisation des vidéos.";
-  window.adviceReport = "Little Elsewhere — bilan statistique\n"+report.join("\n")+"\n\nActions\n"+tips.join("\n")+"\n\n"+idea.textContent;
+  window.adviceReport = "Little Elsewhere — bilan statistique\\n"+report.join("\\n")+"\\n\\nActions\\n"+tips.join("\\n")+"\\n\\n"+idea.textContent;
 }
 document.getElementById("copyAdvice").addEventListener("click",async()=>{
   const status=document.getElementById("copyAdviceStatus");
