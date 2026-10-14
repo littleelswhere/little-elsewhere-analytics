@@ -845,116 +845,31 @@ function unauthorized() {
 // Dernier relevé de chaque vidéo*
 
 async function getStats(env) {
-
   const result = await env.DB.prepare(`
-
-    SELECT
-
-      v.video_id,
-
-      v.title,
-
-      v.created_at,
-
-      s.recorded_at,
-
-      s.views,
-
-      s.likes,
-
-      s.comments,
-
-      s.shares
-
-    FROM videos v
-
-    JOIN video_stats s
-
-      ON s.id = (
-
-        SELECT s2.id
-
-        FROM video_stats s2
-
-        WHERE s2.video_id = v.video_id
-
-        ORDER BY s2.recorded_at DESC, s2.id DESC
-
-        LIMIT 1
-
-      )
-
-    ORDER BY s.views DESC, v.video_id
-
+    SELECT v.video_id, v.title, v.created_at, s.recorded_at,
+           s.views, s.likes, s.comments, s.shares,
+           (SELECT s2.views FROM video_stats s2
+            WHERE s2.video_id = v.video_id AND s2.id <> s.id
+            ORDER BY s2.recorded_at DESC, s2.id DESC LIMIT 1) AS previous_views
+    FROM videos v JOIN video_stats s ON s.id = (
+      SELECT s3.id FROM video_stats s3 WHERE s3.video_id = v.video_id
+      ORDER BY s3.recorded_at DESC, s3.id DESC LIMIT 1
+    ) ORDER BY s.views DESC, v.video_id
   `).all();
-
-
-
-  const videos = result.results || [];
-
-
-
-  const totals = videos.reduce(
-
-    (acc, v) => {
-
-      acc.views += Number(v.views || 0);
-
-      acc.likes += Number(v.likes || 0);
-
-      acc.comments += Number(v.comments || 0);
-
-      acc.shares += Number(v.shares || 0);
-
-      return acc;
-
-    },
-
-    {
-
-      views: 0,
-
-      likes: 0,
-
-      comments: 0,
-
-      shares: 0
-
-    }
-
-  );
-
-
-
-  const lastSync = videos
-
-    .map(v => v.recorded_at)
-
-    .filter(Boolean)
-
-    .sort()
-
-    .at(-1) || null;
-
-
-
-  return {
-
-    account: ACCOUNT_ID,
-
-    videoCount: videos.length,
-
-    totals,
-
-    lastSync,
-
-    videos
-
-  };
-
+  const videos = (result.results || []).map(v => {
+    const views = Number(v.views || 0), likes = Number(v.likes || 0),
+          comments = Number(v.comments || 0), shares = Number(v.shares || 0);
+    return {...v, views, likes, comments, shares,
+      gainViews: v.previous_views == null ? null : views - Number(v.previous_views),
+      engagementRate: views ? (likes + comments + shares) * 100 / views : 0};
+  });
+  const totals = videos.reduce((a,v) => {
+    for(const k of ["views","likes","comments","shares"]) a[k] += v[k];
+    return a;
+  },{views:0,likes:0,comments:0,shares:0});
+  const lastSync = videos.map(v=>v.recorded_at).filter(Boolean).sort().at(-1)||null;
+  return {account:ACCOUNT_ID,videoCount:videos.length,totals,lastSync,videos};
 }
-
-
 
 function dashboard() {
 
@@ -1157,7 +1072,7 @@ th {
 
 
 
-td { font-size: 14px; }
+td { font-size: 14px; } select{background:#24324f;color:white;padding:10px;border:1px solid #415574;border-radius:8px}
 
 
 
@@ -1271,7 +1186,7 @@ a { color: #86b9ff; }
 
 <section>
 
-  <h2>Performances par vidéo</h2>
+  <h2>Performances par vidéo</h2><label for="sort">Classement : </label><select id="sort"><option value="views">Vues</option><option value="gainViews">Gain de vues</option><option value="engagementRate">Engagement</option><option value="likes">Likes</option></select><p class="muted">Gain depuis le précédent relevé disponible par vidéo.</p>
 
   <div class="table-wrap">
 
@@ -1289,7 +1204,7 @@ a { color: #86b9ff; }
 
           <th>Commentaires</th>
 
-          <th>Partages</th>
+          <th>Partages</th><th>Gain vues</th><th>Engagement</th>
 
         </tr>
 
@@ -1369,43 +1284,8 @@ async function loadStats() {
 
 
 
-    const tbody = document.getElementById("videos");
-
-    tbody.replaceChildren();
-
-
-
-    for (const video of data.videos) {
-
-      const tr = document.createElement("tr");
-
-
-
-      const title = document.createElement("td");
-
-      title.textContent = video.title || video.video_id;
-
-
-
-      tr.appendChild(title);
-
-
-
-      for (const key of ["views", "likes", "comments", "shares"]) {
-
-        const td = document.createElement("td");
-
-        td.textContent = number(video[key]);
-
-        tr.appendChild(td);
-
-      }
-
-
-
-      tbody.appendChild(tr);
-
-    }
+    window.currentVideos = data.videos;
+    renderVideos();
 
 
 
@@ -1424,6 +1304,33 @@ async function loadStats() {
 }
 
 
+
+function renderVideos() {
+  const tbody = document.getElementById("videos");
+  tbody.replaceChildren();
+  const key = document.getElementById("sort").value;
+  const videos = [...(window.currentVideos || [])].sort((a,b) =>
+    (Number(b[key]) || 0) - (Number(a[key]) || 0));
+  for(const video of videos) {
+    const tr = document.createElement("tr");
+    const title = document.createElement("td");
+    title.textContent = video.title || video.video_id;
+    tr.appendChild(title);
+    for(const key of ["views","likes","comments","shares"]) {
+      const td = document.createElement("td");
+      td.textContent = number(video[key]);
+      tr.appendChild(td);
+    }
+    const gain = document.createElement("td");
+    gain.textContent = video.gainViews == null ? "—" : (video.gainViews >= 0 ? "+" : "") + number(video.gainViews);
+    tr.appendChild(gain);
+    const rate = document.createElement("td");
+    rate.textContent = Number(video.engagementRate || 0).toFixed(2) + " %";
+    tr.appendChild(rate);
+    tbody.appendChild(tr);
+  }
+}
+document.getElementById("sort").addEventListener("change",renderVideos);
 
 document.getElementById("refresh").addEventListener(
 
