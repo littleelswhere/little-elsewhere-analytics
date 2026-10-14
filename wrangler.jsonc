@@ -1,0 +1,18 @@
+{
+  "name": "little-elsewhere-tiktok",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-14",
+  "workers_dev": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "little-elsewhere-analytics",
+      "database_id": "29af825c-a232-4037-b2b1-b5923da17c93"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "0 * * * *"
+    ]
+  }
+}
