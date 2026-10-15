@@ -1384,6 +1384,12 @@ a { color: #86b9ff; }
   <button type="button" hidden id="copyAIPrompt" style="margin-top:18px;margin-left:8px">Préparer une analyse IA</button>
   <p class="muted">L'analyse IA directe envoie les statistiques de toutes les vidéos suivies et de leur historique disponible à Gemini uniquement lorsque tu cliques sur le bouton. Aucun envoi automatique.</p>
   <button type="button" id="runAI" style="margin-top:12px">Analyser avec Gemini</button>
+  <div class="filters" style="margin-top:12px">
+    <button type="button" id="copyChatGPTExport">Copier pour ChatGPT</button>
+    <button type="button" id="downloadChatGPTExport">Exporter en .txt</button>
+    <button type="button" id="downloadStatsExport">Exporter les statistiques (.csv)</button>
+  </div>
+  <p class="muted" id="exportStatus" aria-live="polite">Les exports incluent les statistiques disponibles. L'analyse Gemini est ajoutée si elle a été générée dans cette session.</p>
   <p class="muted" id="aiStatus" aria-live="polite">Prêt pour une analyse à la demande.</p>
   <div id="aiOutput" style="white-space:pre-wrap;line-height:1.7;overflow-wrap:anywhere;background:#101a30;border:1px solid #2b3a58;padding:20px;border-radius:12px" hidden></div>
   <p class="muted" id="copyAIPromptStatus" aria-live="polite"></p>
@@ -1575,6 +1581,67 @@ document.getElementById("copyAdvice").addEventListener("click",async()=>{
   }
 });
 
+function buildChatGPTExport(){
+  const videos=(window.currentVideos||[]).map(v=>({
+    id:v.video_id,titre:v.title||"",date_publication:v.created_at||null,
+    vues:v.views,likes:v.likes,commentaires:v.comments,partages:v.shares,
+    gain_dernier_releve:v.gainViews,vues_par_heure:v.viewsPerHour,
+    intervalle_heures:v.intervalHours,tendance:v.trend,
+    engagement_pourcent:Number(v.engagementRate||0).toFixed(2)
+  }));
+  const totals=videos.reduce((acc,v)=>{acc.vues+=Number(v.vues)||0;acc.likes+=Number(v.likes)||0;return acc;},{vues:0,likes:0});
+  const history=window.historyDays||[];
+  return [
+    "LITTLE ELSEWHERE — EXPORT POUR CHATGPT",
+    "Date d'export : "+new Date().toISOString(),
+    "Compte TikTok : @little.elsewhere4",
+    "Vidéos : "+videos.length+" | Vues cumulées : "+totals.vues+" | Likes : "+totals.likes,
+    "",
+    "INSTRUCTIONS POUR CHATGPT",
+    "Analyse mes performances TikTok en t'appuyant uniquement sur les données ci-dessous et l'analyse Gemini si présente.",
+    "Commence par un bilan clair, chiffré et critique. Distingue observations, hypothèses et données manquantes.",
+    "Compare les vidéos populaires et celles qui progressent récemment, en tenant compte des biais d'ancienneté.",
+    "Ensuite propose 3 concepts originaux Little Elsewhere et 3 prompts Google Flow complets, directement exploitables.",
+    "ADN créatif : monde miniature rural ouest-africain photoréaliste, adultes minuscules actifs, main géante réaliste à peau foncée, un geste déclencheur simple, résistance et poids palpables, puis phénomène physique progressif spectaculaire et payoff satisfaisant. Ne copie pas le scénario de l'îlot soulevé.",
+    "Format des vidéos : 9:16, 8-10 secondes, plan continu, smartphone spontané, sans texte ni ralenti.",
+    "Les titres ne prouvent pas le contenu visuel. N'invente ni rétention, ni trafic FYP, ni causalité.",
+    "",
+    "ANALYSE GEMINI",
+    window.latestGeminiAnalysis||"Aucune analyse Gemini générée dans cette session.",
+    "",
+    "HISTORIQUE JOURNALIER DISPONIBLE (30 JOURS)",
+    JSON.stringify(history,null,2),
+    "",
+    "STATISTIQUES DE TOUTES LES VIDÉOS",
+    JSON.stringify(videos,null,2)
+  ].join("\\n");
+}
+function downloadDashboardText(name,content,type){
+  const blob=new Blob([content],{type:type||"text/plain;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");a.href=url;a.download=name;
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+document.getElementById("copyChatGPTExport").addEventListener("click",async()=>{
+  const status=document.getElementById("exportStatus");
+  try{await navigator.clipboard.writeText(buildChatGPTExport());status.textContent="Analyse et statistiques copiées. Colle-les dans ChatGPT.";}
+  catch(error){status.textContent="Copie impossible dans ce navigateur : utilise Exporter en .txt.";}
+});
+document.getElementById("downloadChatGPTExport").addEventListener("click",()=>{
+  downloadDashboardText("little-elsewhere-analyse-chatgpt.txt",buildChatGPTExport());
+  document.getElementById("exportStatus").textContent="Export texte téléchargé : tu peux joindre le fichier à ChatGPT.";
+});
+document.getElementById("downloadStatsExport").addEventListener("click",()=>{
+  const rows=window.currentVideos||[];
+  const keys=["video_id","title","created_at","views","likes","comments","shares","gainViews","viewsPerHour","intervalHours","trend","engagementRate"];
+  const csv=[keys.join(","),...rows.map(v=>keys.map(k=>{
+    const value=String(v[k]??"");
+    return '"'+value.replace(/"/g,'""')+'"';
+  }).join(","))].join("\\n");
+  downloadDashboardText("little-elsewhere-statistiques.csv","\\uFEFF"+csv,"text/csv;charset=utf-8");
+  document.getElementById("exportStatus").textContent="Statistiques CSV téléchargées ("+rows.length+" vidéos).";
+});
 function renderAISections(root,content){
   root.replaceChildren();
   const sections=String(content||"").split(/(?=^##\\s)/m);
@@ -1607,7 +1674,7 @@ document.getElementById("runAI").addEventListener("click",async()=>{
     const response=await fetch("/api/ai/analyze",{method:"POST",headers:{"Content-Type":"application/json"},cache:"no-store"});
     const data=await response.json();
     if(!response.ok)throw new Error(data.message||"Erreur HTTP "+response.status);
-    output.hidden=false;renderAISections(output,data.content);
+    window.latestGeminiAnalysis=data.content||"";\n    output.hidden=false;renderAISections(output,data.content);
     status.textContent="Analyse terminée · "+data.analyzedVideos+" vidéos · "+data.model;
   }catch(error){
     status.textContent=error.message;
