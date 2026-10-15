@@ -2161,6 +2161,9 @@ export default {
 
         url.pathname === "/api/stats" ||
         url.pathname === "/api/history" ||
+        url.pathname === "/api/followers/history" ||
+        url.pathname === "/api/ai/prompts" ||
+        url.pathname === "/api/ai/video" ||
         url.pathname === "/api/ai/analyze") {
 
 
