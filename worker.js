@@ -1336,7 +1336,7 @@ a { color: #86b9ff; }
   <h2>Toutes les vidéos</h2>
   <div class="filters">
     <label>Rechercher <input id="videoSearch" type="search" placeholder="Titre ou identifiant..." autocomplete="off"></label>
-    <label>Trier par <select id="sort"><option value="views">Vues</option><option value="viewsPerHour">Vues / heure</option><option value="gainViews">Gain de vues</option><option value="engagementRate">Engagement</option><option value="likes">Likes</option></select></label>\n    <label>Ordre <select id="sortDirection"><option value="desc">Décroissant ↓</option><option value="asc">Croissant ↑</option></select></label>
+    <label>Trier par <select id="sort"><option value="created_at">Date de mise en ligne</option><option value="views">Vues</option><option value="viewsPerHour">Vues / heure</option><option value="gainViews">Gain de vues</option><option value="engagementRate">Engagement</option><option value="likes">Likes</option></select></label>\n    <label>Ordre <select id="sortDirection"><option value="desc">Décroissant ↓</option><option value="asc">Croissant ↑</option></select></label>
     <label>Tendance <select id="trendFilter"><option value="all">Toutes</option><option value="accelerating">En accélération</option><option value="stable">Stables</option><option value="slowing">En ralentissement</option><option value="insufficient">Données insuffisantes</option></select></label>
   </div>
   <p class="muted" id="videoResultCount">Chargement...</p>
@@ -1759,6 +1759,13 @@ function renderVideos() {
     .filter(v => (!search || String(v.title || "").toLocaleLowerCase("fr").includes(search) || String(v.video_id).includes(search))
       && (trend === "all" || v.trend === trend))
     .sort((a,b) => {
+      if(key === "created_at"){
+        const avDate=Date.parse(a.created_at||"");
+        const bvDate=Date.parse(b.created_at||"");
+        if(!Number.isFinite(avDate))return Number.isFinite(bvDate)?1:0;
+        if(!Number.isFinite(bvDate))return -1;
+        return direction*(avDate-bvDate);
+      }
       const av = a[key] == null ? null : Number(a[key]);
       const bv = b[key] == null ? null : Number(b[key]);
       if(av == null || !Number.isFinite(av)) return bv == null || !Number.isFinite(bv) ? 0 : 1;
