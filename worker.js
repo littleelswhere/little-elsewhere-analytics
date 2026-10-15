@@ -1336,7 +1336,8 @@ a { color: #86b9ff; }
   <h2>Toutes les vidéos</h2>
   <div class="filters">
     <label>Rechercher <input id="videoSearch" type="search" placeholder="Titre ou identifiant..." autocomplete="off"></label>
-    <label>Trier par <select id="sort"><option value="created_at">Date de mise en ligne</option><option value="views">Vues</option><option value="viewsPerHour">Vues / heure</option><option value="gainViews">Gain de vues</option><option value="engagementRate">Engagement</option><option value="likes">Likes</option></select></label>\n    <label>Ordre <select id="sortDirection"><option value="desc">Décroissant ↓</option><option value="asc">Croissant ↑</option></select></label>
+    <label>Trier par <select id="sort"><option value="created_at">Date de mise en ligne</option><option value="views">Vues</option><option value="viewsPerHour">Vues / heure</option><option value="gainViews">Gain de vues</option><option value="engagementRate">Engagement</option><option value="likes">Likes</option></select></label>
+    <label>Ordre <select id="sortDirection"><option value="desc">Décroissant ↓</option><option value="asc">Croissant ↑</option></select></label>
     <label>Tendance <select id="trendFilter"><option value="all">Toutes</option><option value="accelerating">En accélération</option><option value="stable">Stables</option><option value="slowing">En ralentissement</option><option value="insufficient">Données insuffisantes</option></select></label>
   </div>
   <p class="muted" id="videoResultCount">Chargement...</p>
@@ -1752,7 +1753,8 @@ function renderTopGainers() {
 function renderVideos() {
   const tbody = document.getElementById("videos");
   tbody.replaceChildren();
-  const key = document.getElementById("sort").value;\n  const direction = document.getElementById("sortDirection").value === "asc" ? 1 : -1;
+  const key = document.getElementById("sort").value;
+  const direction = document.getElementById("sortDirection").value === "asc" ? 1 : -1;
   const search = document.getElementById("videoSearch").value.trim().toLocaleLowerCase("fr");
   const trend = document.getElementById("trendFilter").value;
   const videos = (window.currentVideos || [])
@@ -1760,8 +1762,16 @@ function renderVideos() {
       && (trend === "all" || v.trend === trend))
     .sort((a,b) => {
       if(key === "created_at"){
-        const avDate=Date.parse(a.created_at||"");
-        const bvDate=Date.parse(b.created_at||"");
+        const toMillis=value=>{
+          if(value==null||value==="")return NaN;
+          if(/^\\d+$/.test(String(value).trim())){
+            const n=Number(value);
+            return n<1e11?n*1000:n;
+          }
+          return Date.parse(String(value).trim().replace(" ","T"));
+        };
+        const avDate=toMillis(a.created_at);
+        const bvDate=toMillis(b.created_at);
         if(!Number.isFinite(avDate))return Number.isFinite(bvDate)?1:0;
         if(!Number.isFinite(bvDate))return -1;
         return direction*(avDate-bvDate);
