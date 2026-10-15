@@ -1011,6 +1011,22 @@ async function generateAIAdvice(env, options={}) {
   return content?{content,model,analyzedVideos:videos.length}:{error:"empty_response",message:"Gemini n'a pas fourni de texte. Réessaie."};
 }
 
+async function analyzeUploadedVideo(env,body){
+  if(!env.GEMINI_API_KEY)return {error:"missing_key",message:"Clé Gemini absente."};
+  const data=body?.data, mime=body?.mime;
+  if(mime!=="video/mp4"||typeof data!=="string"||data.length>11000000||data.length<100)return {error:"invalid_video",message:"Importe un MP4 de moins de 8 Mo."};
+  const prompt="Analyse réellement les images de cette vidéo Little Elsewhere, sans inventer d'actions non visibles. Réponds en français avec les sections : ## CHRONOLOGIE (actions par tranche de secondes), ## MÉCANIQUE VISUELLE (main, personnages, échelle, matières, physique), ## MOMENT LE PLUS SATISFAISANT, ## CE QUI FONCTIONNE, ## CE QUI POURRAIT ÊTRE AMÉLIORÉ, ## BRIEF POUR UN FUTUR PROMPT FLOW. Distingue observations et hypothèses. Décris les gestes, les causes et leurs conséquences concrètes.";
+  const response=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",{
+    method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":env.GEMINI_API_KEY},
+    body:JSON.stringify({contents:[{parts:[{text:prompt},{inline_data:{mime_type:mime,data}}]}],generationConfig:{maxOutputTokens:3200,temperature:0.25}}),
+    signal:AbortSignal.timeout(100000)
+  });
+  const result=await response.json().catch(()=>({}));
+  if(!response.ok)return {error:"gemini_error",message:String(result.error?.message||"Analyse vidéo impossible.").slice(0,400)};
+  const content=(result.candidates||[]).flatMap(c=>(c.content?.parts||[]).map(p=>p.text||"")).join(" ").trim();
+  return content?{content}:{error:"empty",message:"Gemini n'a pas retourné d'analyse."};
+}
+
 function dashboard() {
 
   return new Response(`<!doctype html>
@@ -1362,6 +1378,14 @@ a { color: #86b9ff; }
     <label>Tendance <select id="trendFilter"><option value="all">Toutes</option><option value="accelerating">En accélération</option><option value="stable">Stables</option><option value="slowing">En ralentissement</option><option value="insufficient">Données insuffisantes</option></select></label>
   </div>
   <p class="muted" id="videoResultCount">Chargement...</p>
+  <section id="videoAnalysisPanel" class="insight-card" hidden style="margin-bottom:16px">
+    <h3 id="videoAnalysisTitle">Analyse vidéo</h3>
+    <p class="muted">Importe le MP4 correspondant (8 Mo maximum). La vidéo est envoyée à Gemini à ta demande ; seule l'analyse texte est conservée localement dans ce navigateur.</p>
+    <input id="videoAnalysisFile" type="file" accept="video/mp4,.mp4">
+    <button type="button" id="submitVideoAnalysis">Analyser le MP4</button>
+    <p id="videoAnalysisStatus" aria-live="polite"></p>
+    <div id="videoAnalysisResult" style="white-space:pre-wrap"></div>
+  </section>
 
   <div class="table-wrap">
 
@@ -1379,7 +1403,7 @@ a { color: #86b9ff; }
 
           <th>Commentaires</th>
 
-          <th>Partages</th><th>Gain vues</th><th>Vues / h</th><th>Tendance</th><th>Engagement</th>
+          <th>Analyse MP4</th><th>Partages</th><th>Gain vues</th><th>Vues / h</th><th>Tendance</th><th>Engagement</th>
 
         </tr>
 
@@ -1827,6 +1851,38 @@ function renderTopGainers() {
   });
 }
 
+let selectedVideoForAnalysis=null;
+function openVideoAnalysis(video){
+  selectedVideoForAnalysis=video;
+  const panel=document.getElementById("videoAnalysisPanel");panel.hidden=false;
+  document.getElementById("videoAnalysisTitle").textContent="Analyse vidéo : "+(video.title||video.video_id);
+  document.getElementById("videoAnalysisFile").value="";
+  document.getElementById("videoAnalysisStatus").textContent="";
+  document.getElementById("videoAnalysisResult").textContent=localStorage.getItem("videoVisualAnalysis:"+video.video_id)||"Aucune analyse enregistrée pour cette vidéo.";
+  panel.scrollIntoView({behavior:"smooth",block:"nearest"});
+}
+document.getElementById("submitVideoAnalysis").addEventListener("click",async()=>{
+  const file=document.getElementById("videoAnalysisFile").files[0];
+  const status=document.getElementById("videoAnalysisStatus");
+  if(!selectedVideoForAnalysis||!file||file.type!=="video/mp4"||file.size>8000000){
+    status.textContent="Sélectionne un fichier MP4 de moins de 8 Mo.";return;
+  }
+  const button=document.getElementById("submitVideoAnalysis");button.disabled=true;
+  status.textContent="Gemini visionne et analyse la vidéo...";
+  try{
+    const data=await new Promise((resolve,reject)=>{
+      const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(",")[1]);reader.onerror=reject;reader.readAsDataURL(file);
+    });
+    const response=await fetch("/api/ai/video",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({mime:"video/mp4",data})});
+    const result=await response.json();
+    if(!response.ok)throw new Error(result.message||"Analyse impossible");
+    document.getElementById("videoAnalysisResult").textContent=result.content;
+    try{localStorage.setItem("videoVisualAnalysis:"+selectedVideoForAnalysis.video_id,result.content);}catch(e){}
+    status.textContent="Analyse terminée et enregistrée localement.";
+  }catch(e){status.textContent=e.message;}
+  finally{button.disabled=false;}
+});
 function renderVideos() {
   const tbody = document.getElementById("videos");
   tbody.replaceChildren();
@@ -1875,6 +1931,10 @@ function renderVideos() {
       if(i===7)td.className="trend-"+video.trend;
       tr.appendChild(td);
     });
+    const actionCell=document.createElement("td");
+    const action=document.createElement("button");action.type="button";action.textContent="Analyser la vidéo";
+    action.addEventListener("click",()=>openVideoAnalysis(video));
+    actionCell.appendChild(action);tr.insertBefore(actionCell,tr.children[4]);
     fragment.appendChild(tr);
   }
   tbody.appendChild(fragment);
@@ -2056,6 +2116,18 @@ export default {
 
 
 
+      if(url.pathname==="/api/ai/video"){
+        if(request.method!=="POST")return json({error:"method_not_allowed"},405);
+        const origin=request.headers.get("Origin");
+        if(origin&&origin!==url.origin)return json({error:"forbidden_origin"},403);
+        const length=Number(request.headers.get("content-length")||0);
+        if(length>11500000)return json({error:"too_large",message:"MP4 trop volumineux (8 Mo maximum)."},413);
+        try{
+          const body=await request.json();
+          const result=await analyzeUploadedVideo(env,body);
+          return json(result,result.error?400:200);
+        }catch(e){return json({error:"video_failed",message:"Impossible d'analyser cette vidéo."},502);}
+      }
       if (url.pathname === "/api/ai/analyze" || url.pathname === "/api/ai/prompts") {
         if(request.method !== "POST") return json({error:"method_not_allowed"},405);
         const origin=request.headers.get("Origin");
