@@ -917,7 +917,7 @@ async function getHistory(env) {
   }))};
 }
 
-async function generateAIAdvice(env) {
+async function generateAIAdvice(env, options={}) {
   if (!env.GEMINI_API_KEY) return {error:"missing_api_key",message:"Ajoute le secret GEMINI_API_KEY dans Cloudflare pour activer l'analyse."};
   const stats=await getStats(env);
   const all=stats.videos||[];
@@ -946,6 +946,27 @@ async function generateAIAdvice(env) {
     "Écris les analyses en français clair, bref et actionnable ; réserve le niveau de détail aux prompts anglais. Aucun conseil générique comme 'poste régulièrement' ou 'reproduis ce qui marche'.",
     JSON.stringify({total_videos:stats.videoCount,totaux:stats.totals,historique:history.days,videos})
   ].join("\\n");
+  if(options.mode==="prompts"){
+    const refs=(Array.isArray(options.references)?options.references:[]).slice(0,8).map(r=>({
+      titre:String(r.title||"").slice(0,120),prompt:String(r.prompt||"").slice(0,4500),
+      notes:String(r.notes||"").slice(0,500)
+    })).filter(r=>r.prompt.length>80);
+    const prior=String(options.analysis||"").slice(0,14000);
+    if(!refs.length)return {error:"missing_references",message:"Ajoute au moins un vrai prompt de référence dans la bibliothèque avant de générer."};
+    instructions.length=0;
+    instructions.push(
+      "Tu es un réalisateur et ingénieur de prompts Google Flow/Veo extrêmement exigeant. Ta mission unique : écrire TROIS NOUVEAUX prompts de qualité égale ou supérieure aux PROMPTS DE RÉFÉRENCE fournis par l'utilisateur.",
+      "ÉTUDIE d'abord la structure des prompts de référence : leur précision, temporalité, progression physique, cadrage, contraintes et densité descriptive. Reprends leur NIVEAU DE RÉALISATION, pas leurs histoires ni leurs objets.",
+      "Les références sont des exemples fournis par l'utilisateur, pas des vidéos que tu as vues. N'invente pas leurs performances. Les statistiques TikTok sont un indice pour choisir des hypothèses créatives, pas une preuve de causalité.",
+      "ADN Little Elsewhere : village rural miniature d'Afrique de l'Ouest, adultes noirs minuscules réellement actifs, main géante à peau foncée dont le doigt approche la taille d'une maison ; vrai problème initial, habitants qui luttent déjà ; un seul geste de main qui libère une possibilité puis main retirée ; réaction de matière progressive et lourde, physique lisible, payoff humain concret.",
+      "Un plan continu smartphone vertical 9:16, 8-10 secondes, pas de coupe, pas de ralenti, pas de texte, pas de CGI manifeste. Décris des mouvements faisables en 9 secondes : 0-1,5 sec hook, 1,5-3 sec contact/résistance, 3-7 sec réaction physique qui s'amplifie, 7-9 sec payoff. La main ne doit pas tout résoudre.",
+      "Interdiction de copier le scénario de l'îlot soulevé. Les trois concepts doivent différer fortement, avec au moins un sans eau. Privilégie les gestes simples, la gravité, l'inertie, les textures, l'échelle extrême et la lisibilité.",
+      "Réponds exactement avec trois blocs titrés ## PROMPT 1, ## PROMPT 2, ## PROMPT 3. Dans chaque bloc : une ligne française POURQUOI CE TEST (un signal chiffré réel ou une hypothèse explicitement nommée), puis un prompt EN ANGLAIS très détaillé de 180-250 mots, directement copiable dans Flow, puis une caption anglaise et 5 hashtags maximum. Aucune longue analyse statistique.",
+      "ANALYSE PRÉCÉDENTE (si disponible) : "+prior,
+      "PROMPTS DE RÉFÉRENCE DE L'UTILISATEUR : "+JSON.stringify(refs),
+      "STATISTIQUES DE LA CHAÎNE : "+JSON.stringify({totaux:stats.totals,videos:videos.slice().sort((a,b)=>b.vues-a.vues).slice(0,35)})
+    );
+  }
   const headers={"Content-Type":"application/json","x-goog-api-key":env.GEMINI_API_KEY};
   const requestBody=JSON.stringify({contents:[{role:"user",parts:[{text:instructions}]}],generationConfig:{maxOutputTokens:6000,temperature:0.7}});
   const available=await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=100",{
@@ -1391,6 +1412,18 @@ a { color: #86b9ff; }
     <button type="button" id="downloadStatsExport">Exporter les statistiques (.csv)</button>
   </div>
   <p class="muted" id="exportStatus" aria-live="polite">Les exports incluent les statistiques disponibles. L'analyse Gemini est ajoutée si elle a été générée dans cette session.</p>
+  <details class="insight-card" style="margin-top:18px">
+    <summary style="cursor:pointer;font-weight:700">Bibliothèque de prompts de référence</summary>
+    <p class="muted">Colle ici tes vrais meilleurs prompts Flow. Ils sont conservés dans ce navigateur et utilisés pour guider les prochaines créations.</p>
+    <label>Titre / vidéo <input id="referenceTitle" type="text" placeholder="Ex. Îlot soulevé — 90K vues" style="width:100%;padding:10px"></label>
+    <label>Prompt Flow complet <textarea id="referencePrompt" rows="9" placeholder="Colle ici le prompt exact qui a bien fonctionné..." style="width:100%;padding:10px;margin-top:8px"></textarea></label>
+    <label>Notes facultatives <textarea id="referenceNotes" rows="2" placeholder="Ce qui a particulièrement bien fonctionné..." style="width:100%;padding:10px;margin-top:8px"></textarea></label>
+    <button type="button" id="saveReference">Enregistrer ce prompt</button>
+    <div id="referenceList" style="margin-top:12px"></div>
+  </details>
+  <button type="button" id="generatePremiumPrompts" style="margin-top:14px">Créer 3 prompts avec mes références</button>
+  <p class="muted" id="premiumStatus" aria-live="polite"></p>
+  <div id="premiumOutput" hidden></div>
   <p class="muted" id="aiStatus" aria-live="polite">Prêt pour une analyse à la demande.</p>
   <div id="aiOutput" style="white-space:pre-wrap;line-height:1.7;overflow-wrap:anywhere;background:#101a30;border:1px solid #2b3a58;padding:20px;border-radius:12px" hidden></div>
   <p class="muted" id="copyAIPromptStatus" aria-live="polite"></p>
@@ -1607,7 +1640,7 @@ function buildChatGPTExport(){
     "Format des vidéos : 9:16, 8-10 secondes, plan continu, smartphone spontané, sans texte ni ralenti.",
     "Les titres ne prouvent pas le contenu visuel. N'invente ni rétention, ni trafic FYP, ni causalité.",
     "",
-    "ANALYSE GEMINI",
+    "PROMPTS FLOW GÉNÉRÉS AVEC LES RÉFÉRENCES",\n    window.latestPremiumPrompts||"Aucun prompt premium généré dans cette session.",\n    "",\n    "ANALYSE GEMINI",
     window.latestGeminiAnalysis||"Aucune analyse Gemini générée dans cette session.",
     "",
     "HISTORIQUE JOURNALIER DISPONIBLE (30 JOURS)",
@@ -1642,6 +1675,50 @@ document.getElementById("downloadStatsExport").addEventListener("click",()=>{
   }).join(","))].join("\\n");
   downloadDashboardText("little-elsewhere-statistiques.csv","\\uFEFF"+csv,"text/csv;charset=utf-8");
   document.getElementById("exportStatus").textContent="Statistiques CSV téléchargées ("+rows.length+" vidéos).";
+});
+const REFERENCE_KEY="littleElsewherePromptReferencesV1";
+function getPromptReferences(){
+  try{const value=JSON.parse(localStorage.getItem(REFERENCE_KEY)||"[]");return Array.isArray(value)?value:[];}catch(e){return [];}
+}
+function renderPromptReferences(){
+  const root=document.getElementById("referenceList");root.replaceChildren();
+  getPromptReferences().forEach((r,i)=>{
+    const row=document.createElement("div");row.style.padding="10px";row.style.borderBottom="1px solid #344762";
+    const label=document.createElement("span");label.textContent=(i+1)+". "+r.title+" ("+r.prompt.length+" caractères)";row.appendChild(label);
+    const remove=document.createElement("button");remove.type="button";remove.textContent="Supprimer";remove.style.marginLeft="12px";
+    remove.addEventListener("click",()=>{const items=getPromptReferences();items.splice(i,1);localStorage.setItem(REFERENCE_KEY,JSON.stringify(items));renderPromptReferences();});
+    row.appendChild(remove);root.appendChild(row);
+  });
+}
+document.getElementById("saveReference").addEventListener("click",()=>{
+  const title=document.getElementById("referenceTitle").value.trim();
+  const prompt=document.getElementById("referencePrompt").value.trim();
+  const notes=document.getElementById("referenceNotes").value.trim();
+  if(!title||prompt.length<80){document.getElementById("premiumStatus").textContent="Indique un titre et colle un vrai prompt complet (80 caractères minimum).";return;}
+  const items=getPromptReferences();
+  if(items.length>=8){document.getElementById("premiumStatus").textContent="Maximum 8 références. Supprime une ancienne référence.";return;}
+  items.push({title,prompt,notes});localStorage.setItem(REFERENCE_KEY,JSON.stringify(items));
+  document.getElementById("referenceTitle").value="";
+  document.getElementById("referencePrompt").value="";
+  document.getElementById("referenceNotes").value="";
+  renderPromptReferences();document.getElementById("premiumStatus").textContent="Prompt de référence enregistré sur cet appareil.";
+});
+renderPromptReferences();
+document.getElementById("generatePremiumPrompts").addEventListener("click",async()=>{
+  const refs=getPromptReferences();const status=document.getElementById("premiumStatus");
+  if(!refs.length){status.textContent="Ajoute d'abord au moins un prompt de référence complet dans la bibliothèque.";return;}
+  const button=document.getElementById("generatePremiumPrompts");button.disabled=true;button.textContent="Création en cours...";
+  status.textContent="Gemini étudie tes prompts de référence et prépare trois nouvelles réalisations...";
+  try{
+    const response=await fetch("/api/ai/prompts",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({references:refs,analysis:window.latestGeminiAnalysis||""}),cache:"no-store"});
+    const data=await response.json();
+    if(!response.ok)throw new Error(data.message||"Erreur HTTP "+response.status);
+    const root=document.getElementById("premiumOutput");root.hidden=false;renderAISections(root,data.content);
+    window.latestPremiumPrompts=data.content;
+    status.textContent="3 prompts générés avec tes références · "+data.model;
+  }catch(error){status.textContent=error.message;}
+  finally{button.disabled=false;button.textContent="Créer 3 prompts avec mes références";}
 });
 function renderAISections(root,content){
   root.replaceChildren();
@@ -1979,12 +2056,13 @@ export default {
 
 
 
-      if (url.pathname === "/api/ai/analyze") {
+      if (url.pathname === "/api/ai/analyze" || url.pathname === "/api/ai/prompts") {
         if(request.method !== "POST") return json({error:"method_not_allowed"},405);
         const origin=request.headers.get("Origin");
         if(origin && origin!==url.origin) return json({error:"forbidden_origin"},403);
         try {
-          const result=await generateAIAdvice(env);
+          const options=url.pathname==="/api/ai/prompts" ? await request.json().catch(()=>({})) : {};
+          const result=await generateAIAdvice(env, url.pathname==="/api/ai/prompts"?{...options,mode:"prompts"}:{});
           return json(result,result.error?(result.error==="missing_api_key"?503:502):200);
         } catch(error) {
           console.error("AI analysis error",error.message);
