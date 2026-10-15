@@ -6,7 +6,7 @@ const REDIRECT_URI = BASE + "/callback";
 
 const ACCOUNT_ID = "little-elsewhere";
 
-const SCOPES = "user.info.basic,video.list";
+const SCOPES = "user.info.basic,user.info.stats,video.list";
 
 
 
@@ -556,11 +556,28 @@ async function getAccessToken(env) {
 
 
 
+async function collectFollowers(env,accessToken){
+  const response=await fetch("https://open.tiktokapis.com/v2/user/info/?fields=follower_count",{
+    headers:{Authorization:"Bearer "+accessToken}
+  });
+  const data=await response.json().catch(()=>({}));
+  const count=data.data?.user?.follower_count;
+  if(!response.ok||data.error?.code!=="ok"||!Number.isFinite(Number(count)))return;
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS follower_stats (id INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at TEXT NOT NULL, followers INTEGER NOT NULL)").run();
+  await env.DB.prepare("INSERT INTO follower_stats (recorded_at,followers) VALUES (?,?)").bind(new Date().toISOString(),Number(count)).run();
+}
+async function getFollowers(env){
+  try{
+    const rows=await env.DB.prepare("SELECT recorded_at,followers FROM follower_stats ORDER BY id DESC LIMIT 2").all();
+    const a=rows.results||[];
+    return a.length?{count:Number(a[0].followers),gain:a.length>1?Number(a[0].followers)-Number(a[1].followers):null,recordedAt:a[0].recorded_at}:null;
+  }catch(e){return null;}
+}
+
 async function collectVideos(env) {
 
   const accessToken = await getAccessToken(env);
-
-
+  await collectFollowers(env,accessToken).catch(e=>console.warn("Followers unavailable",e.message));
 
   let cursor = null;
 
@@ -892,7 +909,7 @@ async function getStats(env) {
     return a;
   },{views:0,likes:0,comments:0,shares:0});
   const lastSync = videos.map(v=>v.recorded_at).filter(Boolean).sort().at(-1)||null;
-  return {account:ACCOUNT_ID,videoCount:videos.length,totals,lastSync,videos};
+  return {account:ACCOUNT_ID,videoCount:videos.length,totals,lastSync,followers:await getFollowers(env),videos};
 }
 
 async function getHistory(env) {
@@ -1338,6 +1355,7 @@ a { color: #86b9ff; }
   <h2>Vue d'ensemble</h2>
 
   <p>Vidéos suivies : <strong id="count">—</strong></p>
+  <p>Abonnés : <strong id="followersCount">—</strong> <small id="followersGain" class="muted"></small></p>
 
   <p>Dernier relevé : <strong id="lastSync">—</strong></p>
 
@@ -1542,6 +1560,9 @@ async function loadStats() {
 
 
 
+    document.getElementById("followersCount").textContent=data.followers?number(data.followers.count):"Non disponible";
+    const gain=data.followers?.gain;
+    document.getElementById("followersGain").textContent=gain==null?"":(gain>0?"+":"")+number(gain)+" depuis le dernier relevé";
     window.currentVideos = data.videos;
     for (const [name,render] of [
       ["tableau",renderVideos],["progression",renderTopGainers],
