@@ -574,6 +574,26 @@ async function getFollowers(env){
   }catch(e){return null;}
 }
 
+async function getFollowerHistory(env){
+  try{
+    const result=await env.DB.prepare("SELECT recorded_at,followers FROM follower_stats WHERE recorded_at >= datetime('now','-30 days') ORDER BY recorded_at ASC,id ASC LIMIT 1500").all();
+    const rows=(result.results||[]).map(r=>({at:r.recorded_at,count:Number(r.followers)}));
+    const days=new Map();
+    for(const row of rows){
+      const date=String(row.at).slice(0,10);
+      const hour=new Date(row.at).getUTCHours();
+      const localHour=(hour+2)%24;
+      if(!days.has(date))days.set(date,{date,morning:null,evening:null,last:null,first:null});
+      const d=days.get(date);
+      if(!d.first)d.first=row;
+      d.last=row;
+      if(localHour>=5&&localHour<12)d.morning=row;
+      if(localHour>=17&&localHour<24)d.evening=row;
+    }
+    return {records:rows,days:[...days.values()].reverse()};
+  }catch(e){return {records:[],days:[]};}
+}
+
 async function collectVideos(env) {
 
   const accessToken = await getAccessToken(env);
@@ -1377,6 +1397,17 @@ a { color: #86b9ff; }
   <canvas id="viewsChart" height="260" role="img" aria-label="Graphique des vues cumulées sur les 30 derniers jours" style="width:100%;max-width:100%;display:block"></canvas>
   <p class="muted" id="historyStatus">Chargement de l'historique...</p>
 </section>
+<section>
+  <h2>Historique des abonnés · 30 jours</h2>
+  <p class="muted">Relevés TikTok enregistrés automatiquement. Les chiffres du matin et du soir sont affichés uniquement lorsqu'un relevé existe sur cette période.</p>
+  <div id="followerHistorySummary" class="insight-grid"></div>
+  <p id="followerHistoryStatus" class="muted">Chargement de l'historique des abonnés...</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Jour</th><th>Matin</th><th>Soir</th><th>Dernier relevé</th><th>Gain du jour*</th></tr></thead>
+    <tbody id="followerHistoryRows"></tbody>
+  </table></div>
+  <p class="muted">* Gain entre le premier et le dernier relevé disponibles du jour, pas nécessairement entre minuit et 23 h 59.</p>
+</section>
 
 </div>
 <div class="tab-panel" data-panel="videos" hidden>
@@ -1960,6 +1991,32 @@ function renderVideos() {
   }
   tbody.appendChild(fragment);
 }
+async function loadFollowerHistory(){
+  const status=document.getElementById("followerHistoryStatus");
+  try{
+    const response=await fetch("/api/followers/history",{cache:"no-store"});
+    if(!response.ok)throw new Error("HTTP "+response.status);
+    const data=await response.json();
+    const rows=data.days||[];
+    const body=document.getElementById("followerHistoryRows");body.replaceChildren();
+    const summary=document.getElementById("followerHistorySummary");summary.replaceChildren();
+    const records=data.records||[];
+    if(!records.length){status.textContent="Aucun relevé d'abonnés enregistré pour le moment. L'historique commencera dès que TikTok autorisera la récupération.";return;}
+    const first=records[0],last=records[records.length-1];
+    const cards=[["Abonnés au dernier relevé",number(last.count)],["Évolution depuis le premier relevé",(last.count-first.count>0?"+":"")+number(last.count-first.count)],["Nombre de relevés",number(records.length)]];
+    for(const [name,value] of cards){const box=document.createElement("div");box.className="insight-card";const t=document.createElement("p");t.textContent=name;const v=document.createElement("strong");v.textContent=value;box.append(t,v);summary.appendChild(box);}
+    const fmt=r=>r?number(r.count)+" ("+new Date(r.at).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})+")":"—";
+    for(const day of rows){
+      const tr=document.createElement("tr");
+      const gain=day.first&&day.last?day.last.count-day.first.count:null;
+      for(const value of [day.date,fmt(day.morning),fmt(day.evening),fmt(day.last),gain==null?"—":(gain>0?"+":"")+number(gain)]){
+        const td=document.createElement("td");td.textContent=value;tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    }
+    status.textContent=rows.length+" jour(s) de relevés disponibles.";
+  }catch(error){status.textContent="Historique des abonnés indisponible : "+error.message;}
+}
 async function loadHistory() {
   const label = document.getElementById("historyStatus");
   try {
@@ -2031,6 +2088,7 @@ document.getElementById("refresh").addEventListener(
 
 loadStats();
 loadHistory();
+loadFollowerHistory();
 
 setInterval(loadStats, 60000);
 setInterval(loadHistory, 60000);
@@ -2165,7 +2223,7 @@ export default {
 
       try {
 
-        return json(url.pathname === "/api/history" ? await getHistory(env) : await getStats(env));
+        return json(url.pathname === "/api/followers/history" ? await getFollowerHistory(env) : url.pathname === "/api/history" ? await getHistory(env) : await getStats(env));
 
       } catch (error) {
 
